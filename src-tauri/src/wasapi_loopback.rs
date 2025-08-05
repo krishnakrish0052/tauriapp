@@ -21,6 +21,7 @@ pub struct WasapiLoopback {
     channels: u16,
     captured_samples: Arc<Mutex<VecDeque<f32>>>,
     selected_device_name: Option<String>,
+    is_microphone: bool, // True for microphone capture, false for system audio
 }
 
 impl WasapiLoopback {
@@ -31,6 +32,7 @@ impl WasapiLoopback {
             channels: 2,
             captured_samples: Arc::new(Mutex::new(VecDeque::new())),
             selected_device_name: None,
+            is_microphone: false, // Default to system audio
         }
     }
     
@@ -41,6 +43,18 @@ impl WasapiLoopback {
             channels: 2,
             captured_samples: Arc::new(Mutex::new(VecDeque::new())),
             selected_device_name: Some(device_name),
+            is_microphone: false, // Default to system audio
+        }
+    }
+    
+    pub fn new_for_microphone(device_name: Option<String>) -> Self {
+        Self {
+            is_recording: Arc::new(AtomicBool::new(false)),
+            sample_rate: 44100,
+            channels: 2,
+            captured_samples: Arc::new(Mutex::new(VecDeque::new())),
+            selected_device_name: device_name,
+            is_microphone: true, // Microphone capture
         }
     }
 
@@ -50,7 +64,7 @@ impl WasapiLoopback {
             return Ok(());
         }
 
-        info!("Starting WASAPI loopback capture...");
+        info!("Starting WASAPI {} capture...", if self.is_microphone { "MICROPHONE" } else { "SYSTEM AUDIO" });
         
         let host = cpal::default_host();
         
@@ -368,6 +382,41 @@ impl WasapiLoopback {
             }
         }
         
+        // Use the is_microphone flag to distinguish between capture types
+        if self.is_microphone {
+            // For microphone capture, prioritize input devices
+            // Try default input device first (most likely to work)
+            if let Some(device) = host.default_input_device() {
+                if self.get_working_input_config(&device).is_some() {
+                    let name = device.name().unwrap_or("Unknown".to_string());
+                    info!("Using default input device for microphone: {}", name);
+                    return Some(device);
+                }
+            }
+            
+            // Try other input devices (microphones)
+            if let Ok(input_devices) = host.input_devices() {
+                for device in input_devices {
+                    if self.get_working_input_config(&device).is_some() {
+                        let name = device.name().unwrap_or("Unknown".to_string());
+                        info!("Using input device for microphone: {}", name);
+                        return Some(device);
+                    }
+                }
+            }
+        } else {
+            // For system audio capture, prioritize output devices with loopback
+            if let Ok(output_devices) = host.output_devices() {
+                for device in output_devices {
+                    if device.supported_input_configs().is_ok() {
+                        let name = device.name().unwrap_or("Unknown".to_string());
+                        info!("Using output device with loopback for system audio: {}", name);
+                        return Some(device);
+                    }
+                }
+            }
+        }
+
         // Fallback: find any device that has working input configuration
         
         // Try default input device first (most likely to work)

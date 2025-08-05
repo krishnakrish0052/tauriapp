@@ -24,6 +24,7 @@ pub fn run() -> Result<()> {
             stop_audio_stream,
             start_system_audio_capture,
             start_microphone_capture,
+            test_microphone_capture,
             get_audio_devices,
             check_audio_status,
             start_audio_with_config,
@@ -383,6 +384,46 @@ fn start_system_audio_capture() -> Result<String, String> {
         Err(e) => {
             error!("Failed to start system audio capture: {}", e);
             Err(format!("Failed to start system audio capture: {}", e))
+        }
+    }
+}
+
+
+#[tauri::command]
+fn test_microphone_capture() -> Result<String, String> {
+    info!("Testing microphone capture...");
+    
+    // List all audio devices first
+    match audio::list_all_audio_devices() {
+        Ok(devices) => {
+            let input_devices: Vec<_> = devices.into_iter()
+                .filter(|d| d.device_type == "input")
+                .collect();
+            
+            info!("Found {} input devices:", input_devices.len());
+            for device in &input_devices {
+                info!("  - {} (default: {})", device.name, device.is_default);
+            }
+            
+            if input_devices.is_empty() {
+                return Err("No input devices found for microphone capture".to_string());
+            }
+            
+            // Try to start microphone capture
+            match audio::start_microphone_capture() {
+                Ok(_) => {
+                    info!("Microphone capture test started successfully");
+                    Ok(format!("Microphone test started. Found {} input devices", input_devices.len()))
+                }
+                Err(e) => {
+                    error!("Microphone capture test failed: {}", e);
+                    Err(format!("Microphone test failed: {}", e))
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to list audio devices: {}", e);
+            Err(format!("Failed to list audio devices: {}", e))
         }
     }
 }

@@ -84,45 +84,6 @@ pub fn get_device_supported_configs(device_name: &str) -> Result<Vec<String>> {
     WasapiLoopback::get_device_supported_configs(device_name)
 }
 
-/// Get detailed information about available devices
-pub fn get_device_info() -> Result<String> {
-    let devices = list_all_audio_devices()?;
-    let mut info = String::new();
-    
-    info.push_str("=== Audio Devices Information ===\n");
-    info.push_str(&format!("Total devices found: {}\n\n", devices.len()));
-    
-    let input_devices: Vec<_> = devices.iter().filter(|d| d.device_type == "input").collect();
-    let output_devices: Vec<_> = devices.iter().filter(|d| d.device_type == "output").collect();
-    let loopback_devices: Vec<_> = devices.iter().filter(|d| d.supports_loopback).collect();
-    
-    info.push_str(&format!("Input Devices ({}):\n", input_devices.len()));
-    for device in input_devices {
-        info.push_str(&format!("  - {} {}\n", 
-            device.name, 
-            if device.is_default { "(Default)" } else { "" }
-        ));
-    }
-    
-    info.push_str(&format!("\nOutput Devices ({}):\n", output_devices.len()));
-    for device in output_devices {
-        info.push_str(&format!("  - {} {}{}\n", 
-            device.name, 
-            if device.is_default { "(Default)" } else { "" },
-            if device.supports_loopback { " [Loopback Capable]" } else { "" }
-        ));
-    }
-    
-    info.push_str(&format!("\nLoopback Capable Devices ({}):\n", loopback_devices.len()));
-    for device in loopback_devices {
-        info.push_str(&format!("  - {} {}\n", 
-            device.name,
-            if device.is_default { "(Default)" } else { "" }
-        ));
-    }
-    
-    Ok(info)
-}
 
 /// Get basic device information
 pub fn get_default_device_info() -> Result<String> {
@@ -356,12 +317,22 @@ pub fn capture_audio_from_device(device_name: Option<String>, is_mic: bool) -> R
     }
     
     // Create WASAPI loopback instance with or without specific device
-    let mut wasapi_loopback = if let Some(device) = device_name {
-        info!("Using specific device: {}", device);
-        WasapiLoopback::new_with_device(device)
+    let mut wasapi_loopback = if is_mic {
+        if let Some(device) = device_name {
+            info!("Using specific input device for microphone: {}", device);
+            WasapiLoopback::new_for_microphone(Some(device))
+        } else {
+            info!("Using default input device for microphone");
+            WasapiLoopback::new_for_microphone(None)
+        }
     } else {
-        info!("Using default device selection");
-        WasapiLoopback::new()
+        if let Some(device) = device_name {
+            info!("Using specific device for system audio: {}", device);
+            WasapiLoopback::new_with_device(device)
+        } else {
+            info!("Using default device selection for system audio");
+            WasapiLoopback::new()
+        }
     };
     
     // Start WASAPI capture
