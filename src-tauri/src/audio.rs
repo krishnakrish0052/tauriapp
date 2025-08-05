@@ -17,6 +17,7 @@ struct AudioCaptureState {
     config: AudioConfig,
     captured_samples: VecDeque<f32>,
     wasapi_loopback: Option<WasapiLoopback>,
+    is_mic_recording: bool,
 }
 
 fn get_audio_state() -> Arc<Mutex<AudioCaptureState>> {
@@ -26,6 +27,7 @@ fn get_audio_state() -> Arc<Mutex<AudioCaptureState>> {
             config: AudioConfig::default(),
             captured_samples: VecDeque::new(),
             wasapi_loopback: None,
+            is_mic_recording: false,
         }))
     }).clone()
 }
@@ -288,6 +290,12 @@ pub fn start_microphone_capture() -> Result<()> {
         return Err(anyhow!("No microphone input devices found"));
     }
     
+    // Try to find the specific microphone array
+    if let Some(mic_array) = input_devices.iter().find(|d| d.name.contains("Microphone Array")) {
+        info!("Using Microphone Array: {}", mic_array.name);
+        return capture_audio_from_device(Some(mic_array.name.clone()), true);
+    }
+
     // Try to find default microphone or use the first available input device
     if let Some(default_mic) = input_devices.iter().find(|d| d.is_default) {
         info!("Using default microphone: {}", default_mic.name);
@@ -309,7 +317,9 @@ pub fn capture_audio_from_device(device_name: Option<String>, is_mic: bool) -> R
         warn!("Audio capture is already running");
         return Ok(());
     }
-    
+
+    state.is_mic_recording = is_mic;
+
     if is_mic {
         info!("Starting microphone audio capture...");
     } else {
@@ -428,6 +438,12 @@ pub fn is_recording() -> bool {
     let state = get_audio_state();
     let guard = state.lock().unwrap();
     guard.is_recording
+}
+
+pub fn is_mic_recording() -> bool {
+    let state = get_audio_state();
+    let guard = state.lock().unwrap();
+    guard.is_mic_recording
 }
 
 pub fn set_audio_callback<F>(_callback: F) 

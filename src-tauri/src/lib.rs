@@ -39,7 +39,8 @@ pub fn run() -> Result<()> {
             generate_ai_answer,
             analyze_screen_content,
             update_interview_context,
-            save_audio_file
+            save_microphone_file,
+            save_system_audio_file
         ])
         .manage(AppState::new())
         .setup(|_app| {
@@ -441,7 +442,18 @@ fn start_microphone_capture() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn save_audio_file() -> Result<String, String> {
+fn save_microphone_file() -> Result<String, String> {
+    info!("Saving microphone audio file...");
+    save_audio_file_impl(true)
+}
+
+#[tauri::command]
+fn save_system_audio_file() -> Result<String, String> {
+    info!("Saving system audio file...");
+    save_audio_file_impl(false)
+}
+
+fn save_audio_file_impl(is_mic: bool) -> Result<String, String> {
     info!("Saving audio file with timestamp...");
     
     // Generate timestamp filename
@@ -449,7 +461,10 @@ fn save_audio_file() -> Result<String, String> {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let filename = format!("audio_capture_{}.wav", timestamp);
+
+    let prefix = if is_mic { "mic" } else { "Sound" };
+    let filename_prefix = if is_mic { "mic_capture" } else { "audio_capture" };
+    let filename = format!("recordings/{}/{}_{}.wav", prefix, filename_prefix, timestamp);
     
     // Get captured audio samples
     let captured_samples = audio::get_captured_samples();
