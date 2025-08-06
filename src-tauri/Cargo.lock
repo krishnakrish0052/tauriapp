@@ -2355,7 +2355,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.21.7",
- "bytes",
  "cpal",
  "env_logger",
  "futures-util",
@@ -2370,8 +2369,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tokio",
  "tokio-tungstenite",
- "url",
- "uuid",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

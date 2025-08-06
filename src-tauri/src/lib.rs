@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use tauri::{Builder, AppHandle, Window, State};
+use tauri::{Builder, AppHandle, Window, State, Manager};
 use serde::{Serialize, Deserialize};
 use log::{info, error, warn};
 use base64::Engine;
@@ -43,8 +43,21 @@ pub fn run() -> Result<()> {
             save_system_audio_file
         ])
         .manage(AppState::new())
-        .setup(|_app| {
+        .setup(|app| {
             info!("MockMate application starting up...");
+            
+            // Get the main window and set capture protection
+            match app.get_webview_window("main") {
+                Some(main_window) => {
+                    info!("Main window found. Attempting to set capture protection.");
+                    if let Err(e) = set_window_capture_protection(main_window, true) {
+                        error!("Failed to set window capture protection on startup: {}", e);
+                    }
+                },
+                None => {
+                    error!("Main window not found on startup. Capture protection not applied.");
+                }
+            }
             
             // List available audio devices on startup
             audio::list_all_devices();
@@ -520,4 +533,27 @@ fn save_audio_file_impl(is_mic: bool) -> Result<String, String> {
             Err(format!("Failed to convert audio to WAV: {}", e))
         }
     }
+}
+
+#[tauri::command]
+fn set_window_capture_protection(window: tauri::WebviewWindow, protect: bool) -> Result<(), String> {
+    info!("Setting window capture protection to: {}", protect);
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::Foundation::HWND;
+        let hwnd = window.hwnd().map_err(|e| e.to_string())?.0 as HWND;
+        let affinity = if protect { windows_sys::Win32::UI::WindowsAndMessaging::WDA_EXCLUDEFROMCAPTURE } else { windows_sys::Win32::UI::WindowsAndMessaging::WDA_NONE };
+        unsafe {
+            if windows_sys::Win32::UI::WindowsAndMessaging::SetWindowDisplayAffinity(hwnd, affinity) == 0 {
+                let error_code = windows_sys::Win32::Foundation::GetLastError();
+                error!("Failed to set window display affinity: {}", error_code);
+                return Err(format!("Failed to set window display affinity: {}", error_code));
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        warn!("Window capture protection is only supported on Windows.");
+    }
+    Ok(())
 }
