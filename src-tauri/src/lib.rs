@@ -13,10 +13,17 @@ mod websocket;
 mod deepgram;
 mod openai;
 mod wasapi_loopback;
+pub mod realtime_transcription;
 
 use openai::{OpenAIClient, InterviewContext};
 
 pub fn run() -> Result<()> {
+    // Load environment variables from .env file
+    if let Err(e) = dotenvy::dotenv() {
+        warn!("Failed to load .env file: {}. Environment variables will be loaded from system.", e);
+    } else {
+        info!("Successfully loaded .env file");
+    }
 
     Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -34,8 +41,14 @@ pub fn run() -> Result<()> {
             close_application,
             minimize_window,
             toggle_always_on_top,
-            start_deepgram_transcription,
-            stop_deepgram_transcription,
+            // New real-time transcription commands
+            realtime_transcription::start_microphone_transcription,
+            realtime_transcription::start_system_audio_transcription,
+            realtime_transcription::stop_transcription,
+            realtime_transcription::get_transcription_status,
+            // Keep old deepgram commands for backward compatibility during transition
+            deepgram::start_deepgram_transcription,
+            deepgram::stop_deepgram_transcription,
             generate_ai_answer,
             analyze_screen_content,
             update_interview_context,
@@ -45,6 +58,10 @@ pub fn run() -> Result<()> {
         .manage(AppState::new())
         .setup(|app| {
             info!("MockMate application starting up...");
+            
+            // Initialize the real-time transcription service
+            realtime_transcription::init_transcription_service(app.handle().clone());
+            info!("✅ Real-time transcription service initialized");
             
             // Get the main window and set capture protection
             match app.get_webview_window("main") {
@@ -63,11 +80,13 @@ pub fn run() -> Result<()> {
             audio::list_all_devices();
             
             // Initialize environment variables if needed
-            if std::env::var("DEEPGRAM_API_KEY").is_err() {
-                info!("DEEPGRAM_API_KEY not set in environment");
+            match std::env::var("DEEPGRAM_API_KEY") {
+                Ok(_) => info!("✅ DEEPGRAM_API_KEY loaded successfully"),
+                Err(_) => warn!("❌ DEEPGRAM_API_KEY not set in environment - transcription will not work")
             }
-            if std::env::var("OPENAI_API_KEY").is_err() {
-                info!("OPENAI_API_KEY not set in environment");
+            match std::env::var("OPENAI_API_KEY") {
+                Ok(_) => info!("✅ OPENAI_API_KEY loaded successfully"),
+                Err(_) => warn!("❌ OPENAI_API_KEY not set in environment - AI answers will not work")
             }
             
             Ok(())
@@ -195,29 +214,6 @@ fn toggle_always_on_top(window: Window) -> Result<bool, String> {
     let is_always_on_top = window.is_always_on_top().map_err(|e| e.to_string())?;
     window.set_always_on_top(!is_always_on_top).map_err(|e| e.to_string())?;
     Ok(!is_always_on_top)
-}
-
-#[tauri::command]
-async fn start_deepgram_transcription(app_handle: AppHandle) -> Result<String, String> {
-    info!("Starting Deepgram transcription...");
-    let api_key = std::env::var("DEEPGRAM_API_KEY")
-        .map_err(|_| "DEEPGRAM_API_KEY environment variable not set".to_string())?;
-    
-    deepgram::start_transcription(api_key, app_handle)
-        .await
-        .map_err(|e| e.to_string())?;
-    
-    Ok("Transcription started".to_string())
-}
-
-#[tauri::command]
-async fn stop_deepgram_transcription() -> Result<String, String> {
-    info!("Stopping Deepgram transcription...");
-    deepgram::stop_transcription()
-        .await
-        .map_err(|e| e.to_string())?;
-    
-    Ok("Transcription stopped".to_string())
 }
 
 #[tauri::command]

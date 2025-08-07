@@ -1,157 +1,190 @@
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use futures_util::{SinkExt, StreamExt};
-use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter};
-use log::{info, error, debug};
 use anyhow::Result;
-use tokio::sync::mpsc;
-use std::sync::Arc;
+use futures_util::{SinkExt, StreamExt};
+use log::{error, info, warn};
 use parking_lot::Mutex;
-use once_cell::sync::Lazy;
+use serde_json::json;
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter};
+use tokio::sync::mpsc;
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use url::Url;
+use crate::audio;
 
-static DEEPGRAM_CLIENT: Lazy<Arc<Mutex<Option<DeepgramClient>>>> = 
-    Lazy::new(|| Arc::new(Mutex::new(None)));
+pub static DEEPGRAM_CLIENT: Mutex<Option<DeepgramClient>> = Mutex::new(None);
 
 pub struct DeepgramClient {
     audio_sender: Option<mpsc::Sender<Vec<u8>>>,
-    is_connected: bool,
+    join_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl DeepgramClient {
     pub fn new() -> Self {
         Self {
             audio_sender: None,
-            is_connected: false,
+            join_handle: None,
         }
     }
 
     pub async fn connect(&mut self, api_key: &str, app_handle: AppHandle) -> Result<()> {
-        let deepgram_url = format!(
-            "wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&interim_results=true&endpointing=300"
+        info!("Connecting to Deepgram WebSocket API...");
+
+        // Create WebSocket URL with parameters
+        let ws_url = format!(
+            "wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&interim_results=true&punctuate=true&sample_rate=48000&channels=2&encoding=linear16"
         );
 
-        let request = tokio_tungstenite::tungstenite::http::Request::builder()
-            .uri(&deepgram_url)
-            .header("Authorization", format!("Token {}", api_key))
-            .body(())?;
+        let url = Url::parse(&ws_url)?;
+        let (ws_stream, _) = connect_async(url).await?;
+        info!("Connected to Deepgram WebSocket");
 
-        let (ws_stream, _) = connect_async(request).await?;
-        let (mut write, mut read) = ws_stream.split();
-
-        // Create channel for audio data
+        let (mut ws_sender, mut ws_receiver) = ws_stream.split();
         let (audio_tx, mut audio_rx) = mpsc::channel::<Vec<u8>>(1000);
-        self.audio_sender = Some(audio_tx);
-        self.is_connected = true;
+        self.audio_sender = Some(audio_tx.clone());
 
-        info!("Connected to Deepgram");
-
-        // Handle incoming transcription results
         let app_handle_clone = app_handle.clone();
-        tokio::spawn(async move {
-            while let Some(message) = read.next().await {
-                match message {
-                    Ok(Message::Text(text)) => {
-                        debug!("Deepgram response: {}", text);
-                        
-                        if let Ok(data) = serde_json::from_str::<Value>(&text) {
-                            if let Some(channel) = data.get("channel") {
-                                if let Some(alternatives) = channel.get("alternatives") {
-                                    if let Some(alternative) = alternatives.get(0) {
-                                        if let Some(transcript) = alternative.get("transcript") {
-                                            let transcript_text = transcript.as_str().unwrap_or("").trim();
-                                            if !transcript_text.is_empty() {
-                                                let is_final = data.get("is_final").and_then(|v| v.as_bool()).unwrap_or(false);
-                                                
-                                                let _ = app_handle_clone.emit("transcription", json!({
-                                                    "text": transcript_text,
-                                                    "is_final": is_final
-                                                }));
+        let api_key_clone = api_key.to_string();
+
+        // Set up audio callback to receive audio data from WASAPI
+        let audio_tx_clone = audio_tx.clone();
+        audio::set_audio_callback(move |audio_data| {
+            if !audio_data.is_empty() {
+                let _ = audio_tx_clone.try_send(audio_data);
+            }
+        });
+
+        let join_handle = tokio::spawn(async move {
+            // Send authentication message
+            let auth_msg = json!({
+                "type": "auth",
+                "token": api_key_clone
+            });
+            if let Err(e) = ws_sender.send(Message::Text(auth_msg.to_string())).await {
+                error!("Failed to send auth message: {}", e);
+                return;
+            }
+
+            // Start tasks for sending audio and receiving transcriptions
+            let ws_sender = Arc::new(tokio::sync::Mutex::new(ws_sender));
+            let _app_handle_for_sender = app_handle_clone.clone();
+            let ws_sender_clone = ws_sender.clone();
+
+            // Task for sending audio data
+            let sender_task = tokio::spawn(async move {
+                while let Some(audio_data) = audio_rx.recv().await {
+                    let mut sender = ws_sender_clone.lock().await;
+                    if let Err(e) = sender.send(Message::Binary(audio_data)).await {
+                        error!("Failed to send audio data to Deepgram: {}", e);
+                        break;
+                    }
+                }
+            });
+
+            // Task for receiving transcription results
+            let receiver_task = tokio::spawn(async move {
+                while let Some(msg) = ws_receiver.next().await {
+                    match msg {
+                        Ok(Message::Text(text)) => {
+                            match serde_json::from_str::<serde_json::Value>(&text) {
+                                Ok(json_msg) => {
+                                    if let Some(channel) = json_msg.get("channel") {
+                                        if let Some(alternatives) = channel.get("alternatives") {
+                                            if let Some(alternative) = alternatives.get(0) {
+                                                if let Some(transcript) = alternative.get("transcript").and_then(|t| t.as_str()) {
+                                                    if !transcript.trim().is_empty() {
+                                                        let is_final = json_msg.get("is_final").and_then(|f| f.as_bool()).unwrap_or(false);
+                                                        let confidence = alternative.get("confidence").and_then(|c| c.as_f64()).unwrap_or(0.0);
+                                                        
+                                                        info!("Transcription: {} (final: {}, confidence: {:.2})", transcript, is_final, confidence);
+                                                        
+                                                        let _ = app_handle_clone.emit(
+                                                            "transcription-result",
+                                                            json!({
+                                                                "text": transcript,
+                                                                "is_final": is_final,
+                                                                "confidence": confidence
+                                                            }),
+                                                        );
+                                                    }
+                                                }
                                             }
                                         }
                                     }
                                 }
+                                Err(e) => {
+                                    warn!("Failed to parse Deepgram response: {}", e);
+                                }
                             }
                         }
+                        Ok(Message::Binary(_)) => {
+                            // Handle binary messages if needed
+                        }
+                        Ok(Message::Close(_)) => {
+                            info!("Deepgram WebSocket connection closed");
+                            break;
+                        }
+                        Err(e) => {
+                            error!("WebSocket error: {}", e);
+                            let _ = app_handle_clone.emit(
+                                "transcription-error",
+                                json!({ "error": e.to_string() }),
+                            );
+                            break;
+                        }
+                        _ => {}
                     }
-                    Ok(Message::Close(_)) => {
-                        info!("Deepgram connection closed");
-                        let _ = app_handle_clone.emit("transcription-closed", json!({}));
-                        break;
-                    }
-                    Err(e) => {
-                        error!("Deepgram error: {}", e);
-                        let _ = app_handle_clone.emit("transcription-error", json!({"error": e.to_string()}));
-                        break;
-                    }
-                    _ => {}
+                }
+            });
+
+            // Wait for either task to complete
+            tokio::select! {
+                _ = sender_task => {
+                    info!("Audio sender task completed");
+                }
+                _ = receiver_task => {
+                    info!("Transcription receiver task completed");
                 }
             }
         });
 
-        // Handle outgoing audio data
-        tokio::spawn(async move {
-            while let Some(audio_data) = audio_rx.recv().await {
-                if let Err(e) = write.send(Message::Binary(audio_data)).await {
-                    error!("Failed to send audio to Deepgram: {}", e);
-                    break;
-                }
-            }
-        });
+        self.join_handle = Some(join_handle);
+
+        // Emit connection success
+        let _ = app_handle.emit(
+            "transcription-status",
+            json!({ "status": "connected", "request_id": "deepgram-session" }),
+        );
 
         Ok(())
-    }
-
-    pub async fn send_audio(&self, audio_data: Vec<u8>) -> Result<()> {
-        if let Some(sender) = &self.audio_sender {
-            sender.send(audio_data).await?;
-        }
-        Ok(())
-    }
-
-    pub fn is_connected(&self) -> bool {
-        self.is_connected
     }
 
     pub async fn disconnect(&mut self) {
-        self.is_connected = false;
+        if let Some(handle) = self.join_handle.take() {
+            handle.abort();
+            info!("Deepgram transcription task aborted");
+        }
         self.audio_sender = None;
         info!("Disconnected from Deepgram");
     }
 }
 
-pub async fn start_transcription(api_key: String, app_handle: AppHandle) -> Result<()> {
+#[tauri::command]
+pub async fn start_deepgram_transcription(app_handle: AppHandle) -> Result<String, String> {
+    let api_key = std::env::var("DEEPGRAM_API_KEY")
+        .map_err(|_| "DEEPGRAM_API_KEY not set".to_string())?;
+
     let mut client = DeepgramClient::new();
-    client.connect(&api_key, app_handle).await?;
-    
+    client.connect(&api_key, app_handle).await.map_err(|e| e.to_string())?;
+
     *DEEPGRAM_CLIENT.lock() = Some(client);
-    Ok(())
+
+    Ok("Transcription started".to_string())
 }
 
-pub async fn stop_transcription() -> Result<()> {
-    let client = DEEPGRAM_CLIENT.lock().take();
-    if let Some(mut client) = client {
+#[tauri::command]
+pub async fn stop_deepgram_transcription() -> Result<String, String> {
+    let client_to_disconnect = DEEPGRAM_CLIENT.lock().take();
+    if let Some(mut client) = client_to_disconnect {
         client.disconnect().await;
     }
-    Ok(())
-}
-
-pub async fn send_audio_data(audio_data: Vec<u8>) -> Result<()> {
-    // First check if connected without holding the lock across await
-    let client_connected = {
-        let guard = DEEPGRAM_CLIENT.lock();
-        guard.as_ref().map(|c| c.is_connected()).unwrap_or(false)
-    };
-    
-    if client_connected {
-        // Clone the sender outside the lock to avoid holding it across await
-        let sender = {
-            let guard = DEEPGRAM_CLIENT.lock();
-            guard.as_ref().and_then(|c| c.audio_sender.clone())
-        };
-        
-        if let Some(sender) = sender {
-            sender.send(audio_data).await?;
-        }
-    }
-    Ok(())
+    Ok("Transcription stopped".to_string())
 }

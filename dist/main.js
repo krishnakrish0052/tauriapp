@@ -281,7 +281,30 @@ class MockMateController {
             // Listen for transcription events from Deepgram
             await listen('transcription-result', (event) => {
                 console.log('Transcription result:', event.payload);
-                this.updateTranscription(event.payload.text || event.payload);
+                const payload = event.payload;
+                if (payload.text && payload.text.trim()) {
+                    this.updateTranscription(payload.text, payload.is_final);
+                    if (payload.confidence) {
+                        console.log(`Confidence: ${(payload.confidence * 100).toFixed(1)}%`);
+                    }
+                }
+            });
+
+            // Listen for transcription status updates
+            await listen('transcription-status', (event) => {
+                console.log('Transcription status:', event.payload);
+                const payload = event.payload;
+                if (payload.status === 'connected') {
+                    this.showNotification(`Deepgram connected (ID: ${payload.request_id})`, 'success');
+                } else if (payload.status === 'disconnected') {
+                    this.showNotification('Deepgram disconnected', 'info');
+                }
+            });
+
+            // Listen for transcription errors
+            await listen('transcription-error', (event) => {
+                console.error('Transcription error:', event.payload);
+                this.showNotification(`Transcription error: ${event.payload.error}`, 'error');
             });
 
             // Listen for audio status changes
@@ -321,16 +344,14 @@ class MockMateController {
             const micBtn = document.getElementById('micBtn');
             
             if (this.isMicOn) {
-                // Stop microphone
-                await safeInvoke('stop_audio_stream');
-                await safeInvoke('stop_deepgram_transcription');
+                // Stop microphone transcription
+                await safeInvoke('stop_transcription');
                 this.isMicOn = false;
                 micBtn.classList.remove('active');
                 this.showNotification('Microphone stopped', 'success');
             } else {
-                // Start microphone
-                await safeInvoke('start_microphone_capture');
-                await safeInvoke('start_deepgram_transcription');
+                // Start microphone transcription
+                await safeInvoke('start_microphone_transcription');
                 this.isMicOn = true;
                 micBtn.classList.add('active');
                 this.showNotification('Microphone started', 'success');
@@ -353,16 +374,14 @@ class MockMateController {
             const systemSoundBtn = document.getElementById('systemSoundBtn');
             
             if (this.isSystemSoundOn) {
-                // Stop system sound
-                await safeInvoke('stop_audio_stream');
-                await safeInvoke('stop_deepgram_transcription');
+                // Stop system audio transcription
+                await safeInvoke('stop_transcription');
                 this.isSystemSoundOn = false;
                 systemSoundBtn.classList.remove('active');
                 this.showNotification('System sound stopped', 'success');
             } else {
-                // Start system sound
-                await safeInvoke('start_system_audio_capture');
-                await safeInvoke('start_deepgram_transcription');
+                // Start system audio transcription
+                await safeInvoke('start_system_audio_transcription');
                 this.isSystemSoundOn = true;
                 systemSoundBtn.classList.add('active');
                 this.showNotification('System sound started', 'success');
@@ -384,8 +403,7 @@ class MockMateController {
         try {
             // Stop any active recordings first
             if (this.isMicOn || this.isSystemSoundOn) {
-                await safeInvoke('stop_audio_stream');
-                await safeInvoke('stop_deepgram_transcription');
+                await safeInvoke('stop_transcription');
             }
             
             // Close the application
@@ -520,13 +538,22 @@ class MockMateController {
         }
     }
 
-    updateTranscription(text) {
+    updateTranscription(text, isFinal = false) {
         if (text && text.trim()) {
-            this.currentTranscription = text;
             const transcriptionEl = document.getElementById('transcriptionText');
-            transcriptionEl.textContent = `"${text}"`;
-            transcriptionEl.classList.add('active');
-            transcriptionEl.classList.remove('listening');
+            
+            if (isFinal) {
+                // Final transcription - save it and show with solid styling
+                this.currentTranscription = text;
+                transcriptionEl.textContent = `"${text}"`;
+                transcriptionEl.classList.add('active');
+                transcriptionEl.classList.remove('listening', 'interim');
+            } else {
+                // Interim transcription - show with different styling
+                transcriptionEl.textContent = `"${text}..."` + (this.currentTranscription ? ` (Final: "${this.currentTranscription}")` : '');
+                transcriptionEl.classList.add('interim');
+                transcriptionEl.classList.remove('listening');
+            }
         }
     }
 
@@ -543,13 +570,17 @@ class MockMateController {
         
         const isRecording = this.isMicOn || this.isSystemSoundOn;
         
-        if (isRecording) {
-            recordingStatus.textContent = 'Recording';
-            recordingIndicator.style.display = 'block';
-        } else {
-            recordingStatus.textContent = 'Stopped';
-            recordingIndicator.style.display = 'none';
+        // Only update if elements exist (they don't exist in current HTML)
+        if (recordingStatus) {
+            recordingStatus.textContent = isRecording ? 'Recording' : 'Stopped';
         }
+        
+        if (recordingIndicator) {
+            recordingIndicator.style.display = isRecording ? 'block' : 'none';
+        }
+        
+        // For now, we'll just log the recording status since the UI elements don't exist
+        console.log(`🎤 Recording status: ${isRecording ? 'Recording' : 'Stopped'}`);
     }
 
     updateAudioStatus(status) {
