@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MockMate AI: Response Window</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <style>
+        :root {
+            --primary-bg: #000000;
+            --secondary-bg: rgba(0, 0, 0, 0.7);
+            --panel-bg: rgba(0, 0, 0, 0.7);
+            --accent: #00d4ff;
+            --accent-secondary: #ff6b35;
+            --success: #00c896;
+            --danger: #ff4757;
+            --warning: #ffa502;
+            --text-primary: #ffffff;
+            --text-secondary: #ffffff;
+            --text-muted: rgba(255, 255, 255, 0.7);
+            --border: rgba(255, 255, 255, 0.15);
+            --border-active: rgba(0, 212, 255, 0.4);
+            --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+            --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
+            --gradient-primary: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(255, 107, 53, 0.05));
+            --gradient-panel: linear-gradient(145deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+        }
+        
+        * { box-sizing: border-box; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', 'SF Pro Display', system-ui, sans-serif;
+            background: transparent;
+            margin: 0;
+            padding: 0;
+            color: var(--text-primary);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 1150px;
+            height: 180px;
+            line-height: 1.6;
+            font-size: 14px;
+            overflow: hidden;
+        }
+        
+        .app-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+        
+        .response-window {
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.80);
+            border-radius: 16px;
+            display: flex;
+            flex-direction: column;
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .response-window::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: var(--gradient-primary);
+            opacity: 0.3;
+            pointer-events: none;
+        }
+        
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            background: var(--gradient-panel);
+            position: relative;
+            z-index: 2;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+        
+        .brand { display: flex; align-items: center; gap: 12px; }
+        
+        .logo {
+            width: 32px; height: 32px;
+            background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 18px; color: white;
+            box-shadow: var(--shadow-sm);
+        }
+        
+        .brand h2 {
+            font-size: 18px; margin: 0; font-weight: 600; letter-spacing: -0.2px;
+            background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .status-pill {
+            background: rgba(0, 200, 150, 0.15); color: var(--success);
+            padding: 6px 12px; border-radius: 20px; font-size: 12px;
+            font-weight: 500; border: 1px solid rgba(0, 200, 150, 0.2);
+            margin-left: 16px; animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+        
+        .utility-btn {
+            width: 28px; height: 28px; background: rgba(0, 0, 0, 0.8);
+            border: 1px solid var(--border); border-radius: 6px; color: var(--text-secondary);
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; transition: all 0.2s ease; font-size: 14px;
+        }
+        
+        .utility-btn:hover { background: rgba(0, 0, 0, 0.9); color: var(--text-primary); transform: translateY(-1px); }
+        .utility-btn.danger:hover { background: rgba(255, 71, 87, 0.2); color: var(--danger); border-color: var(--danger); }
+        
+        .content-area {
+            padding: 0; 
+            margin: 0;
+            background: transparent; 
+            font-size: 21px;
+            font-weight: bold;
+            line-height: 1.0; 
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 3px;
+            bottom: 3px;
+            overflow-y: auto;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+            z-index: 2;
+        }
+        
+        .streaming-indicator {
+            width: 8px; height: 8px; background: var(--accent);
+            border-radius: 50%; animation: blink 1.5s infinite;
+            box-shadow: 0 0 8px var(--accent);
+            display: inline-block;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        
+        @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0.3; } }
+        
+        .material-icons {
+            font-family: 'Material Icons'; font-weight: normal; font-style: normal;
+            font-size: 20px; display: inline-block; line-height: 1; text-transform: none;
+            letter-spacing: normal; word-wrap: normal; white-space: nowrap; direction: ltr;
+            -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+            -moz-osx-font-smoothing: grayscale; font-feature-settings: 'liga';
+        }
+        
+        /* Scrollbar Styling */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 3px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.5);
+        }
+        
+        /* Animation for cursor in typing effect */
+        .cursor {
+            display: inline-block;
+            width: 2px;
+            height: 1em;
+            background-color: var(--accent);
+            margin-left: 2px;
+            animation: blink 1s infinite;
+            vertical-align: middle;
+        }
+        
+        @keyframes slideInFromBottom {
+            from { transform: translateY(20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        
+        @keyframes slideOutToBottom {
+            from { transform: translateY(0); opacity: 1; }
+            to { transform: translateY(20px); opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <div class="response-window">
+            <button id="closeBtn" class="utility-btn danger" title="Close Window" style="position: absolute; top: 10px; right: 10px; z-index: 10;"><span class="material-icons">close</span></button>
+            <div id="contentArea" class="content-area">Waiting for AI response...</div>
+        </div>
+    </div>
+    <script>
+        let currentText = '';
+        let typewriterTimeout = null;
+        
+        // Initialize when the window is loaded
+        window.addEventListener('DOMContentLoaded', () => {
+            // Get references to elements
+            const closeBtn = document.getElementById('closeBtn');
+            const contentArea = document.getElementById('contentArea');
+            
+            // Close button event listener
+            closeBtn.addEventListener('click', async () => {
+                console.log('Close button clicked');
+                try {
+                    if (window.__TAURI__ && window.__TAURI__.invoke) {
+                        console.log('Attempting to hide AI response window via Tauri');
+                        await window.__TAURI__.invoke('hide_ai_response_window');
+                        console.log('Successfully hid AI response window');
+                    } else {
+                        console.log('Tauri not available, trying window.close()');
+                        window.close();
+                    }
+                } catch (error) {
+                    console.error('Error hiding window:', error);
+                    // Fallback: try window.close()
+                    try {
+                        window.close();
+                    } catch (closeError) {
+                        console.error('Error with window.close():', closeError);
+                    }
+                }
+            });
+            
+            console.log('AI Response window loaded and ready');
+        });
+        
+        // Global function to update content (called from Tauri)
+        window.updateContent = function(type, data) {
+            console.log('updateContent called:', type, data);
+            const contentArea = document.getElementById('contentArea');
+            
+            switch (type) {
+                case 'stream':
+                    // Clear any existing typewriter effect
+                    if (typewriterTimeout) {
+                        clearTimeout(typewriterTimeout);
+                    }
+                    
+                    // Start typewriter effect
+                    currentText = data.text || '';
+                    startTypewriter(contentArea);
+                    break;
+                    
+                case 'complete':
+                    // Clear any existing typewriter effect
+                    if (typewriterTimeout) {
+                        clearTimeout(typewriterTimeout);
+                    }
+                    
+                    // Final response
+                    contentArea.innerHTML = data.text || '';
+                    adjustWindowHeight();
+                    break;
+                    
+                case 'error':
+                    // Error in generating response
+                    contentArea.innerHTML = `<span style="color: var(--danger);">Error: ${data.error}</span>`;
+                    adjustWindowHeight();
+                    break;
+            }
+        };
+        
+        // Typewriter effect function
+        function startTypewriter(element) {
+            let index = 0;
+            element.innerHTML = '';
+            
+            function typeNext() {
+                if (index < currentText.length) {
+                    element.innerHTML = currentText.substring(0, index + 1) + '<span class="cursor">|</span>';
+                    index++;
+                    adjustWindowHeight();
+                    typewriterTimeout = setTimeout(typeNext, 30); // 30ms per character
+                } else {
+                    // Remove cursor when done
+                    element.innerHTML = currentText;
+                    adjustWindowHeight();
+                }
+            }
+            
+            typeNext();
+        }
+        
+        // Adjust window height based on content
+        function adjustWindowHeight() {
+            const contentArea = document.getElementById('contentArea');
+            if (contentArea && window.__TAURI__) {
+                const contentHeight = contentArea.scrollHeight;
+                const padding = 20; // Top and bottom padding
+                const totalHeight = Math.min(Math.max(contentHeight + padding, 100), 500);
+                
+                // Use Tauri to resize the window
+                window.__TAURI__.invoke('resize_ai_response_window', { height: totalHeight })
+                    .catch(err => console.log('Resize failed:', err));
+            }
+        }
+    </script>
+</body>
+</html>

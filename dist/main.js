@@ -105,7 +105,10 @@ class MockMateController {
         this.isSystemSoundOn = false;
         this.isTranscriptionActive = false;
         this.currentTranscription = '';
+        this.fullTranscription = '';  // Cumulative transcription text
+        this.interimTranscription = ''; // Current interim text
         this.selectedModel = 'gpt-4-turbo';
+        this.aiResponseWindow = null;
         this.models = [
             { 
                 name: 'GPT-4 Turbo', 
@@ -425,7 +428,7 @@ class MockMateController {
             const companyInput = document.getElementById('companyInput');
             const jobDescriptionInput = document.getElementById('jobDescriptionInput');
             
-            const question = questionInput.value.trim() || this.currentTranscription || 'Please provide a general interview answer';
+            const question = questionInput.value.trim() || this.fullTranscription || 'Please provide a general interview answer';
             
             if (!question) {
                 this.showNotification('No question available to generate answer', 'warning');
@@ -433,6 +436,16 @@ class MockMateController {
             }
 
             this.showNotification('Generating AI answer...', 'info');
+            
+            // Show the AI response window (it was created at startup)
+            try {
+                await safeInvoke('show_ai_response_window');
+                console.log('AI response window shown successfully');
+            } catch (windowError) {
+                console.error('Failed to show AI response window:', windowError);
+                // Continue with fallback - show in main window or notification
+                this.showNotification('Using fallback display for AI response', 'warning');
+            }
             
             const payload = {
                 question: question,
@@ -444,12 +457,15 @@ class MockMateController {
 
             const answer = await safeInvoke('generate_ai_answer', { payload });
             
-            // Display the answer in a new popup or update the transcription area
-            this.displayAnswer(answer);
+            // Send the answer to the AI response window using streaming
+            await this.sendToAiWindow('stream', answer);
             this.showNotification('Answer generated successfully', 'success');
             
         } catch (error) {
             console.error('Failed to generate answer:', error);
+            // Send error to AI window if it exists
+            await this.sendToAiWindow('error', error.message || error.toString());
+            
             if (error.message && error.message.includes('Tauri not ready')) {
                 this.showNotification('Please wait for app to finish initializing...', 'warning');
             } else {
@@ -543,14 +559,27 @@ class MockMateController {
             const transcriptionEl = document.getElementById('transcriptionText');
             
             if (isFinal) {
-                // Final transcription - save it and show with solid styling
-                this.currentTranscription = text;
-                transcriptionEl.textContent = `"${text}"`;
+                // Final transcription - append to full transcription
+                if (this.fullTranscription) {
+                    this.fullTranscription += ' ' + text;
+                } else {
+                    this.fullTranscription = text;
+                }
+                this.currentTranscription = this.fullTranscription;
+                this.interimTranscription = '';
+                
+                // Show full transcription
+                transcriptionEl.textContent = this.fullTranscription;
                 transcriptionEl.classList.add('active');
                 transcriptionEl.classList.remove('listening', 'interim');
             } else {
                 // Interim transcription - show with different styling
-                transcriptionEl.textContent = `"${text}..."` + (this.currentTranscription ? ` (Final: "${this.currentTranscription}")` : '');
+                this.interimTranscription = text;
+                const displayText = this.fullTranscription + 
+                    (this.fullTranscription ? ' ' : '') + 
+                    `${text}...`;
+                
+                transcriptionEl.textContent = displayText;
                 transcriptionEl.classList.add('interim');
                 transcriptionEl.classList.remove('listening');
             }
@@ -559,9 +588,16 @@ class MockMateController {
 
     clearTranscription() {
         this.currentTranscription = '';
+        this.fullTranscription = '';
+        this.interimTranscription = '';
         const transcriptionEl = document.getElementById('transcriptionText');
         transcriptionEl.textContent = '';
         this.updateTranscriptionState();
+        // Also close AI response window if open
+        if (this.aiResponseWindow) {
+            this.aiResponseWindow.remove();
+            this.aiResponseWindow = null;
+        }
     }
 
     updateRecordingStatus() {
@@ -610,6 +646,189 @@ class MockMateController {
         }
     }
 
+    // Create AI Response Window
+    createAiResponseWindow() {
+        // Remove existing window if any
+        if (this.aiResponseWindow) {
+            this.aiResponseWindow.remove();
+        }
+
+        const mainWindow = document.querySelector('.main-window');
+        const mainWindowRect = mainWindow.getBoundingClientRect();
+        
+        this.aiResponseWindow = document.createElement('div');
+        this.aiResponseWindow.className = 'ai-response-window';
+        this.aiResponseWindow.style.cssText = `
+            position: absolute;
+            top: ${mainWindowRect.bottom + 5}px;
+            left: ${mainWindowRect.left}px;
+            width: ${mainWindowRect.width}px;
+            min-height: 100px;
+            max-height: 400px;
+            background: rgba(0, 0, 0, 0.85);
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            overflow: hidden;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            animation: slideInFromBottom 0.3s ease;
+        `;
+        
+        const header = document.createElement('div');
+        header.className = 'ai-response-header';
+        header.style.cssText = `
+            padding: 12px 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            background: linear-gradient(145deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        `;
+        
+        const title = document.createElement('div');
+        title.style.cssText = `
+            color: var(--text-primary);
+            font-weight: 600;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        `;
+        title.innerHTML = `
+            <span class="material-icons" style="font-size: 18px; color: var(--accent);">auto_awesome</span>
+            AI Assistant Response
+        `;
+        
+        const closeBtn = document.createElement('button');
+        closeBtn.style.cssText = `
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+        `;
+        closeBtn.innerHTML = '<span class="material-icons" style="font-size: 18px;">close</span>';
+        closeBtn.onclick = () => {
+            this.aiResponseWindow.remove();
+            this.aiResponseWindow = null;
+        };
+        closeBtn.onmouseover = () => closeBtn.style.background = 'rgba(255, 255, 255, 0.1)';
+        closeBtn.onmouseout = () => closeBtn.style.background = 'none';
+        
+        header.appendChild(title);
+        header.appendChild(closeBtn);
+        
+        const content = document.createElement('div');
+        content.className = 'ai-response-content';
+        content.style.cssText = `
+            padding: 16px;
+            color: var(--text-primary);
+            line-height: 1.6;
+            font-size: 14px;
+            overflow-y: auto;
+            flex: 1;
+            max-height: 320px;
+        `;
+        
+        this.aiResponseWindow.appendChild(header);
+        this.aiResponseWindow.appendChild(content);
+        document.body.appendChild(this.aiResponseWindow);
+        
+        return content;
+    }
+    
+    // Show streaming response in AI window
+    showStreamingResponse(text) {
+        if (!this.aiResponseWindow) {
+            this.createAiResponseWindow();
+        }
+        
+        const content = this.aiResponseWindow.querySelector('.ai-response-content');
+        content.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 8px; color: var(--accent);">
+                <div class="streaming-indicator"></div>
+                ${text}
+            </div>
+        `;
+    }
+    
+    // Stream text to AI response window with typing effect
+    streamTextToWindow(text) {
+        if (!this.aiResponseWindow) {
+            this.createAiResponseWindow();
+        }
+        
+        const content = this.aiResponseWindow.querySelector('.ai-response-content');
+        content.innerHTML = '';
+        
+        let index = 0;
+        const streamingSpeed = 30; // milliseconds per character
+        
+        const typeText = () => {
+            if (index < text.length) {
+                content.innerHTML = text.substring(0, index + 1) + '<span class="cursor">|</span>';
+                index++;
+                setTimeout(typeText, streamingSpeed);
+                
+                // Auto-resize window based on content
+                this.adjustAiWindowHeight();
+            } else {
+                // Remove cursor when done
+                content.innerHTML = text;
+            }
+        };
+        
+        typeText();
+    }
+    
+    // Adjust AI window height based on content
+    adjustAiWindowHeight() {
+        if (!this.aiResponseWindow) return;
+        
+        const content = this.aiResponseWindow.querySelector('.ai-response-content');
+        const contentHeight = content.scrollHeight;
+        const maxHeight = 400;
+        const minHeight = 100;
+        
+        const newHeight = Math.min(Math.max(contentHeight + 80, minHeight), maxHeight); // +80 for header
+        this.aiResponseWindow.style.height = newHeight + 'px';
+    }
+    
+    // Send data to AI response window (for Tauri-based window communication)
+    async sendToAiWindow(type, data) {
+        try {
+            // Use the new Tauri command to send data to AI response window
+            const aiResponseData = {
+                message_type: type,
+                text: typeof data === 'string' ? data : data?.text || null,
+                error: typeof data === 'string' && type === 'error' ? data : data?.error || null
+            };
+            
+            console.log('Sending to AI window:', aiResponseData);
+            
+            await safeInvoke('send_ai_response_data', { data: aiResponseData });
+            console.log('Successfully sent data to AI response window');
+            
+        } catch (error) {
+            console.error('Failed to send data to AI window:', error);
+            // Fallback: display in main window
+            if (type === 'stream' || type === 'complete') {
+                const text = typeof data === 'string' ? data : data?.text;
+                if (text) {
+                    this.displayAnswer(text);
+                }
+            } else if (type === 'error') {
+                const errorMsg = typeof data === 'string' ? data : data?.error || 'Unknown error';
+                this.showNotification(`AI Error: ${errorMsg}`, 'error');
+            }
+        }
+    }
+
     showNotification(message, type = 'info') {
         // Simple notification system - could be enhanced with a proper notification library
         const notification = document.createElement('div');
@@ -655,7 +874,7 @@ class MockMateController {
     }
 }
 
-// Add CSS for notification animations
+// Add CSS for notification animations and AI response window
 const style = document.createElement('style');
 style.textContent = `
     @keyframes slideInFromLeft {
@@ -666,6 +885,48 @@ style.textContent = `
     @keyframes slideOut {
         from { transform: translateX(0); opacity: 1; }
         to { transform: translateX(-100%); opacity: 0; }
+    }
+    
+    @keyframes slideInFromBottom {
+        from { transform: translateY(20px); opacity: 0; }
+        to { transform: translateY(0); opacity: 1; }
+    }
+    
+    .streaming-indicator {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--accent);
+        animation: pulse 1.5s infinite;
+        box-shadow: 0 0 4px var(--accent);
+    }
+    
+    .cursor {
+        color: var(--accent);
+        animation: blink 1s infinite;
+    }
+    
+    @keyframes blink {
+        0%, 50% { opacity: 1; }
+        51%, 100% { opacity: 0; }
+    }
+    
+    .ai-response-window::-webkit-scrollbar {
+        width: 6px;
+    }
+    
+    .ai-response-window::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 3px;
+    }
+    
+    .ai-response-window::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.3);
+        border-radius: 3px;
+    }
+    
+    .ai-response-window::-webkit-scrollbar-thumb:hover {
+        background: rgba(255, 255, 255, 0.5);
     }
 `;
 document.head.appendChild(style);
