@@ -145,18 +145,41 @@
             box-shadow: 0 0 8px rgba(0, 212, 255, 0.3);
         }
 
-        .transcription-area {
-            padding: 12px 16px; background: rgba(0,0,0,0.7); font-size: 22px;
-            line-height: 1.4; min-height: 60px; display: flex; align-items: center;
-            justify-content: space-between;
-            border-bottom: 1px solid var(--border); position: relative; z-index: 2;
+        .transcription-container {
+            display: flex;
+            align-items: stretch;
+            border-bottom: 1px solid var(--border);
+            position: relative;
+            z-index: 2;
             flex: 1;
+            background: rgba(0,0,0,0.7);
+        }
+        
+        .transcription-area {
+            padding: 12px 16px;
+            font-size: 22px;
+            line-height: 1.4;
+            min-height: 60px;
+            flex: 1;
+            overflow-x: auto;
+            overflow-y: hidden;
+            scrollbar-width: none; /* Firefox */
+            -ms-overflow-style: none; /* Internet Explorer 10+ */
+        }
+        
+        /* Hide scrollbar for WebKit browsers (Chrome, Safari) */
+        .transcription-area::-webkit-scrollbar {
+            display: none;
         }
         
         .transcription-text { 
             color: var(--text-secondary); font-style: italic; opacity: 0.8; 
             animation: fadeIn 0.3s ease; transition: all 0.2s ease;
-            flex-grow: 1;
+            white-space: nowrap;
+            overflow: visible;
+            text-overflow: unset;
+            display: inline-block;
+            vertical-align: middle;
         }
         .transcription-text.active { color: var(--text-primary); opacity: 1; font-style: normal; }
         .transcription-text.listening { color: var(--accent); }
@@ -168,11 +191,17 @@
             opacity: 0.8;
         }
         
+        .clear-button-area {
+            padding: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        
         .clear-transcription-btn {
             background: rgba(255, 255, 255, 0.1);
             transition: background-color 0.2s ease;
-            flex-shrink: 0;
-            margin-left: 16px;
         }
 
         .clear-transcription-btn .material-icons {
@@ -328,9 +357,13 @@
                     </div>
                 </div>
             </div>
-            <div class="transcription-area">
-                <div id="transcriptionText" class="transcription-text">Enable Mic or System Sound to start transcription...</div>
-                <button id="clearBtn" class="utility-btn clear-transcription-btn" title="Clear Transcription"><span class="material-icons">close</span></button>
+            <div class="transcription-container">
+                <div class="transcription-area">
+                    <div id="transcriptionText" class="transcription-text">Enable Mic or System Sound to start transcription...</div>
+                </div>
+                <div class="clear-button-area">
+                    <button id="clearBtn" class="utility-btn clear-transcription-btn" title="Clear Transcription"><span class="material-icons">close</span></button>
+                </div>
             </div>
             <div class="input-section">
                 <div class="action-buttons">

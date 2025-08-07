@@ -557,6 +557,7 @@ class MockMateController {
     updateTranscription(text, isFinal = false) {
         if (text && text.trim()) {
             const transcriptionEl = document.getElementById('transcriptionText');
+            const transcriptionArea = transcriptionEl.parentElement; // Get the scrollable container
             
             if (isFinal) {
                 // Final transcription - append to full transcription
@@ -582,6 +583,14 @@ class MockMateController {
                 transcriptionEl.textContent = displayText;
                 transcriptionEl.classList.add('interim');
                 transcriptionEl.classList.remove('listening');
+            }
+            
+            // Auto-scroll to show the latest text (scroll to the right)
+            if (transcriptionArea) {
+                // Use requestAnimationFrame for smooth scrolling
+                requestAnimationFrame(() => {
+                    transcriptionArea.scrollLeft = transcriptionArea.scrollWidth;
+                });
             }
         }
     }
