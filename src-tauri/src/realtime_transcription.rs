@@ -16,6 +16,7 @@ use tokio::sync::Mutex as TokioMutex;
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::oneshot;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use deepgram::common::options::Encoding;
 use deepgram::Deepgram;
@@ -44,6 +45,7 @@ pub struct RealTimeTranscription {
     config: AudioConfig,
     app_handle: AppHandle,
     shutdown_tx: Option<oneshot::Sender<()>>,
+    audio_stop_signal: Arc<AtomicBool>,
 }
 
 impl RealTimeTranscription {
@@ -53,6 +55,7 @@ impl RealTimeTranscription {
             config: AudioConfig::default(),
             app_handle,
             shutdown_tx: None,
+            audio_stop_signal: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -68,6 +71,9 @@ impl RealTimeTranscription {
         *is_running = true;
         drop(is_running);
 
+        // Reset stop signal for new session
+        self.audio_stop_signal.store(false, Ordering::Relaxed);
+
         // Clone config before moving it
         let config_clone = config.clone();
         self.config = config_clone.clone();
@@ -79,10 +85,11 @@ impl RealTimeTranscription {
         // Clone necessary data for the async task
         let app_handle = self.app_handle.clone();
         let is_running_arc = self.is_running.clone();
+        let audio_stop_signal = self.audio_stop_signal.clone();
 
         // Spawn the main transcription task
         let _handle = tokio::spawn(async move {
-            if let Err(e) = Self::run_transcription_task(config, api_key, app_handle.clone(), shutdown_rx).await {
+            if let Err(e) = Self::run_transcription_task(config, api_key, app_handle.clone(), shutdown_rx, audio_stop_signal).await {
                 error!("Transcription task failed: {}", e);
                 let _ = app_handle.emit("transcription-error", json!({
                     "error": e.to_string()
@@ -121,6 +128,9 @@ impl RealTimeTranscription {
         info!("Stopping real-time transcription");
         *is_running = false;
 
+        // Signal audio capture thread to stop
+        self.audio_stop_signal.store(true, Ordering::Relaxed);
+
         // Send shutdown signal
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
             let _ = shutdown_tx.send(());
@@ -140,13 +150,14 @@ impl RealTimeTranscription {
         api_key: String,
         app_handle: AppHandle,
         mut shutdown_rx: oneshot::Receiver<()>,
+        audio_stop_signal: Arc<AtomicBool>,
     ) -> Result<()> {
         info!("Initializing Deepgram client");
         let dg_client = Deepgram::new(&api_key)
             .map_err(|e| anyhow::anyhow!("Failed to create Deepgram client: {}", e))?;
 
         info!("Starting audio stream");
-        let audio_stream = Self::create_audio_stream(config.clone())?;
+        let audio_stream = Self::create_audio_stream(config.clone(), audio_stop_signal.clone())?;
 
         info!("Starting Deepgram streaming transcription");
         let mut results = dg_client
@@ -207,7 +218,7 @@ impl RealTimeTranscription {
     }
 
     /// Create audio stream based on configuration
-    fn create_audio_stream(config: AudioConfig) -> Result<FuturesReceiver<Result<Bytes, RecvError>>> {
+    fn create_audio_stream(config: AudioConfig, audio_stop_signal: Arc<AtomicBool>) -> Result<FuturesReceiver<Result<Bytes, RecvError>>> {
         info!("Creating audio stream: {:?}", config);
 
         let (sync_tx, sync_rx) = crossbeam::channel::unbounded();
@@ -215,8 +226,9 @@ impl RealTimeTranscription {
 
         // Spawn audio capture thread
         let config_clone = config.clone();
+        let stop_signal_clone = audio_stop_signal.clone();
         thread::spawn(move || {
-            if let Err(e) = Self::run_audio_capture_thread(config_clone, sync_tx) {
+            if let Err(e) = Self::run_audio_capture_thread(config_clone, sync_tx, stop_signal_clone) {
                 error!("Audio capture thread failed: {}", e);
             }
         });
@@ -224,13 +236,23 @@ impl RealTimeTranscription {
         // Spawn bridge task to convert crossbeam channel to futures channel
         tokio::spawn(async move {
             loop {
-                match sync_rx.recv() {
+                // Check stop signal periodically
+                if audio_stop_signal.load(Ordering::Relaxed) {
+                    info!("Audio stream bridge received stop signal");
+                    break;
+                }
+
+                match sync_rx.recv_timeout(Duration::from_millis(100)) {
                     Ok(data) => {
                         if async_tx.send(Ok(data)).await.is_err() {
                             break;
                         }
                     }
-                    Err(_) => {
+                    Err(crossbeam::channel::RecvTimeoutError::Timeout) => {
+                        // Continue loop to check stop signal again
+                        continue;
+                    }
+                    Err(crossbeam::channel::RecvTimeoutError::Disconnected) => {
                         info!("Audio capture channel closed");
                         break;
                     }
@@ -245,6 +267,7 @@ impl RealTimeTranscription {
     fn run_audio_capture_thread(
         config: AudioConfig,
         sync_tx: crossbeam::channel::Sender<Bytes>,
+        stop_signal: Arc<AtomicBool>,
     ) -> Result<()> {
         let host = cpal::default_host();
         
@@ -275,16 +298,22 @@ impl RealTimeTranscription {
               supported_config.sample_format());
 
         // Build and start the audio stream
-        let stream = Self::build_audio_stream(&device, &supported_config, sync_tx)?;
+        let stream = Self::build_audio_stream(&device, &supported_config, sync_tx.clone(), stop_signal.clone())?;
         stream.play()
             .map_err(|e| anyhow::anyhow!("Failed to start audio stream: {}", e))?;
 
         info!("Audio capture started successfully");
 
-        // Keep the stream alive
-        loop {
+        // Keep the stream alive until stop signal is received
+        while !stop_signal.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(100));
         }
+
+        info!("Audio capture thread shutting down");
+        drop(stream); // Explicitly drop the stream
+        drop(sync_tx); // Close the channel
+        
+        Ok(())
     }
 
     /// Find actual microphone device (not stereo mix)
@@ -376,13 +405,14 @@ impl RealTimeTranscription {
         device: &cpal::Device,
         config: &cpal::SupportedStreamConfig,
         sync_tx: crossbeam::channel::Sender<Bytes>,
+        stop_signal: Arc<AtomicBool>,
     ) -> Result<Stream> {
         let stream_config = config.config();
         
         let stream = match config.sample_format() {
-            SampleFormat::F32 => Self::build_stream::<f32>(device, &stream_config, sync_tx),
-            SampleFormat::I16 => Self::build_stream::<i16>(device, &stream_config, sync_tx),
-            SampleFormat::U16 => Self::build_stream::<u16>(device, &stream_config, sync_tx),
+            SampleFormat::F32 => Self::build_stream::<f32>(device, &stream_config, sync_tx, stop_signal),
+            SampleFormat::I16 => Self::build_stream::<i16>(device, &stream_config, sync_tx, stop_signal),
+            SampleFormat::U16 => Self::build_stream::<u16>(device, &stream_config, sync_tx, stop_signal),
             sample_format => {
                 return Err(anyhow::anyhow!("Unsupported sample format: {:?}", sample_format));
             }
@@ -396,6 +426,7 @@ impl RealTimeTranscription {
         device: &cpal::Device,
         config: &cpal::StreamConfig,
         sync_tx: crossbeam::channel::Sender<Bytes>,
+        stop_signal: Arc<AtomicBool>,
     ) -> Result<Stream>
     where
         T: cpal::Sample + cpal::SizedSample + Send + 'static,
@@ -405,6 +436,11 @@ impl RealTimeTranscription {
             .build_input_stream(
                 config,
                 move |data: &[T], _: &cpal::InputCallbackInfo| {
+                    // Check if we should stop before processing audio data
+                    if stop_signal.load(Ordering::Relaxed) {
+                        return; // Stop processing audio
+                    }
+                    
                     // Convert samples to i16 little-endian bytes (Deepgram's preferred format)
                     let mut bytes = BytesMut::with_capacity(data.len() * 2);
                     for sample in data {
@@ -415,7 +451,10 @@ impl RealTimeTranscription {
                     // Send to crossbeam channel (non-blocking)
                     if let Err(_) = sync_tx.try_send(bytes.freeze()) {
                         // Channel full or closed, skip this buffer
-                        warn!("Audio buffer dropped due to full channel");
+                        // Don't log warning every time when stopped to avoid spam
+                        if !stop_signal.load(Ordering::Relaxed) {
+                            warn!("Audio buffer dropped due to full channel");
+                        }
                     }
                 },
                 |err| error!("Audio stream error: {}", err),
