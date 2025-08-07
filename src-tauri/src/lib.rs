@@ -41,6 +41,12 @@ pub fn run() -> Result<()> {
             close_application,
             minimize_window,
             toggle_always_on_top,
+            create_ai_response_window,
+            close_ai_response_window,
+            resize_ai_response_window,
+            show_ai_response_window,
+            hide_ai_response_window,
+            send_ai_response_data,
             // New real-time transcription commands
             realtime_transcription::start_microphone_transcription,
             realtime_transcription::start_system_audio_transcription,
@@ -74,6 +80,13 @@ pub fn run() -> Result<()> {
                 None => {
                     error!("Main window not found on startup. Capture protection not applied.");
                 }
+            }
+            
+            // Create AI response window at startup (hidden by default)
+            if let Err(e) = create_ai_response_window_at_startup(app.handle().clone()) {
+                error!("Failed to create AI response window at startup: {}", e);
+            } else {
+                info!("✅ AI response window created at startup");
             }
             
             // List available audio devices on startup
@@ -528,6 +541,282 @@ fn save_audio_file_impl(is_mic: bool) -> Result<String, String> {
             audio::cleanup_audio_capture();
             Err(format!("Failed to convert audio to WAV: {}", e))
         }
+    }
+}
+
+#[tauri::command]
+fn create_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
+    info!("Creating AI response window...");
+    
+    let main_window = match app_handle.get_webview_window("main") {
+        Some(window) => window,
+        None => {
+            error!("Main window not found");
+            return Err("Main window not found".to_string());
+        }
+    };
+    
+    // Get main window position and size
+    let main_position = main_window.outer_position().map_err(|e| e.to_string())?;
+    let main_size = main_window.outer_size().map_err(|e| e.to_string())?;
+    
+    // Calculate position for response window (below main window)
+    let response_x = main_position.x;
+    let response_y = main_position.y + main_size.height as i32 + 5; // 5px gap
+    
+    // Create response window configuration
+    let window_config = tauri::WebviewWindowBuilder::new(
+        &app_handle,
+        "ai-response",
+        tauri::WebviewUrl::App("ai-response.html".into())
+    )
+    .title("AI Response")
+    .inner_size(1150.0, 150.0) // Start with minimal height
+    .min_inner_size(1150.0, 100.0)
+    .max_inner_size(1150.0, 500.0)
+    .position(response_x as f64, response_y as f64)
+    .resizable(false)
+    .fullscreen(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .visible(true)
+    .decorations(false)
+    .transparent(true)
+    .shadow(false)
+    .focused(true);
+    
+    match window_config.build() {
+        Ok(window) => {
+            info!("AI response window created successfully");
+            
+            // Set window capture protection for the response window too
+            if let Err(e) = set_window_capture_protection(window, true) {
+                error!("Failed to set window capture protection on AI response window: {}", e);
+            }
+            
+            Ok("AI response window created".to_string())
+        }
+        Err(e) => {
+            error!("Failed to create AI response window: {}", e);
+            Err(format!("Failed to create AI response window: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+fn close_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
+    info!("Closing AI response window...");
+    
+    if let Some(window) = app_handle.get_webview_window("ai-response") {
+        match window.close() {
+            Ok(_) => {
+                info!("AI response window closed successfully");
+                Ok("AI response window closed".to_string())
+            }
+            Err(e) => {
+                error!("Failed to close AI response window: {}", e);
+                Err(format!("Failed to close AI response window: {}", e))
+            }
+        }
+    } else {
+        info!("AI response window not found - may already be closed");
+        Ok("AI response window not found".to_string())
+    }
+}
+
+#[tauri::command]
+fn resize_ai_response_window(app_handle: AppHandle, height: u32) -> Result<String, String> {
+    info!("Resizing AI response window to height: {}", height);
+    
+    if let Some(window) = app_handle.get_webview_window("ai-response") {
+        let clamped_height = height.max(100).min(500); // Clamp between 100 and 500
+        
+        match window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+            width: 1150,
+            height: clamped_height,
+        })) {
+            Ok(_) => {
+                info!("AI response window resized successfully to height: {}", clamped_height);
+                Ok(format!("Window resized to height: {}", clamped_height))
+            }
+            Err(e) => {
+                error!("Failed to resize AI response window: {}", e);
+                Err(format!("Failed to resize window: {}", e))
+            }
+        }
+    } else {
+        warn!("AI response window not found for resize");
+        Err("AI response window not found".to_string())
+    }
+}
+
+// Function to create AI response window at startup (hidden by default)
+fn create_ai_response_window_at_startup(app_handle: AppHandle) -> Result<String, String> {
+    info!("Creating AI response window at startup...");
+    
+    let main_window = match app_handle.get_webview_window("main") {
+        Some(window) => window,
+        None => {
+            error!("Main window not found during startup");
+            return Err("Main window not found".to_string());
+        }
+    };
+    
+    // Get main window position and size
+    let main_position = main_window.outer_position().map_err(|e| e.to_string())?;
+    let main_size = main_window.outer_size().map_err(|e| e.to_string())?;
+    
+    // Calculate position for response window (below main window)
+    let response_x = main_position.x;
+    let response_y = main_position.y + main_size.height as i32 + 5; // 5px gap
+    
+    // Create response window configuration (hidden by default)
+    let window_config = tauri::WebviewWindowBuilder::new(
+        &app_handle,
+        "ai-response",
+        tauri::WebviewUrl::App("ai-response.html".into())
+    )
+    .title("AI Response")
+    .inner_size(1150.0, 150.0) // Start with minimal height
+    .min_inner_size(1150.0, 100.0)
+    .max_inner_size(1150.0, 500.0)
+    .position(response_x as f64, response_y as f64)
+    .resizable(false)
+    .fullscreen(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .visible(false) // Start hidden
+    .decorations(false)
+    .transparent(true)
+    .shadow(false)
+    .focused(false);
+    
+    match window_config.build() {
+        Ok(window) => {
+            info!("AI response window created at startup (hidden)");
+            
+            // Set window capture protection for the response window too
+            if let Err(e) = set_window_capture_protection(window, true) {
+                error!("Failed to set window capture protection on AI response window: {}", e);
+            }
+            
+            Ok("AI response window created at startup".to_string())
+        }
+        Err(e) => {
+            error!("Failed to create AI response window at startup: {}", e);
+            Err(format!("Failed to create AI response window: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+fn show_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
+    info!("Showing AI response window...");
+    
+    if let Some(window) = app_handle.get_webview_window("ai-response") {
+        match window.show() {
+            Ok(_) => {
+                info!("AI response window shown successfully");
+                Ok("AI response window shown".to_string())
+            }
+            Err(e) => {
+                error!("Failed to show AI response window: {}", e);
+                Err(format!("Failed to show AI response window: {}", e))
+            }
+        }
+    } else {
+        warn!("AI response window not found - trying to create it");
+        create_ai_response_window(app_handle)
+    }
+}
+
+#[tauri::command]
+fn hide_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
+    info!("Hiding AI response window...");
+    
+    if let Some(window) = app_handle.get_webview_window("ai-response") {
+        match window.hide() {
+            Ok(_) => {
+                info!("AI response window hidden successfully");
+                Ok("AI response window hidden".to_string())
+            }
+            Err(e) => {
+                error!("Failed to hide AI response window: {}", e);
+                Err(format!("Failed to hide AI response window: {}", e))
+            }
+        }
+    } else {
+        info!("AI response window not found - already hidden or not created");
+        Ok("AI response window not found".to_string())
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct AiResponseData {
+    message_type: String, // "stream", "complete", "error"
+    text: Option<String>,
+    error: Option<String>,
+}
+
+#[tauri::command]
+fn send_ai_response_data(app_handle: AppHandle, data: AiResponseData) -> Result<String, String> {
+    info!("Sending AI response data: {:?}", data.message_type);
+    
+    if let Some(window) = app_handle.get_webview_window("ai-response") {
+        // First ensure the window is visible
+        if let Err(e) = window.show() {
+            error!("Failed to show AI response window: {}", e);
+        }
+        
+        // Send data to the AI response window via JavaScript evaluation
+        let js_code = match data.message_type.as_str() {
+            "stream" => {
+                let text = data.text.unwrap_or_default();
+                let escaped_text = text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
+                format!(r#"
+                    if (window.updateContent) {{
+                        window.updateContent('stream', {{ text: "{}" }});
+                    }} else {{
+                        console.log('updateContent function not found');
+                    }}
+                "#, escaped_text)
+            }
+            "complete" => {
+                let text = data.text.unwrap_or_default();
+                let escaped_text = text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
+                format!(r#"
+                    if (window.updateContent) {{
+                        window.updateContent('complete', {{ text: "{}" }});
+                    }}
+                "#, escaped_text)
+            }
+            "error" => {
+                let error_msg = data.error.unwrap_or_default();
+                let escaped_error = error_msg.replace('\\', "\\\\").replace('"', "\\\"");
+                format!(r#"
+                    if (window.updateContent) {{
+                        window.updateContent('error', {{ error: "{}" }});
+                    }}
+                "#, escaped_error)
+            }
+            _ => {
+                return Err("Invalid message type".to_string());
+            }
+        };
+        
+        match window.eval(&js_code) {
+            Ok(_) => {
+                info!("AI response data sent successfully");
+                Ok("Data sent to AI response window".to_string())
+            }
+            Err(e) => {
+                error!("Failed to send data to AI response window: {}", e);
+                Err(format!("Failed to send data: {}", e))
+            }
+        }
+    } else {
+        warn!("AI response window not found");
+        Err("AI response window not found".to_string())
     }
 }
 

@@ -28,9 +28,9 @@ impl DeepgramClient {
     pub async fn connect(&mut self, api_key: &str, app_handle: AppHandle) -> Result<()> {
         info!("Connecting to Deepgram WebSocket API...");
 
-        // Create WebSocket URL with parameters
+        // Create WebSocket URL with optimized parameters for speech recognition
         let ws_url = format!(
-            "wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&interim_results=true&punctuate=true&sample_rate=48000&channels=2&encoding=linear16"
+            "wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&interim_results=true&punctuate=true&sample_rate=16000&channels=1&encoding=linear16&endpointing=100&vad_events=true"
         );
 
         let url = Url::parse(&ws_url)?;

@@ -160,13 +160,17 @@ impl RealTimeTranscription {
         let audio_stream = Self::create_audio_stream(config.clone(), audio_stop_signal.clone())?;
 
         info!("Starting Deepgram streaming transcription");
+        // Configure Deepgram for the processed audio format (mono 16kHz)
+        let processed_sample_rate = 16000; // After resampling from 48kHz to 16kHz
+        let processed_channels = 1;        // After converting from stereo to mono
+        
         let mut results = dg_client
             .transcription()
             .stream_request()
             .keep_alive()
             .encoding(Encoding::Linear16)
-            .sample_rate(config.sample_rate)
-            .channels(config.channels)
+            .sample_rate(processed_sample_rate)
+            .channels(processed_channels)
             .interim_results(true)
             .stream(audio_stream)
             .await
@@ -221,8 +225,8 @@ impl RealTimeTranscription {
     fn create_audio_stream(config: AudioConfig, audio_stop_signal: Arc<AtomicBool>) -> Result<FuturesReceiver<Result<Bytes, RecvError>>> {
         info!("Creating audio stream: {:?}", config);
 
-        let (sync_tx, sync_rx) = crossbeam::channel::unbounded();
-        let (mut async_tx, async_rx) = mpsc::channel(100);
+        let (sync_tx, sync_rx) = crossbeam::channel::bounded(500); // Larger buffer to prevent drops
+        let (mut async_tx, async_rx) = mpsc::channel(200); // Larger async buffer
 
         // Spawn audio capture thread
         let config_clone = config.clone();
@@ -242,7 +246,7 @@ impl RealTimeTranscription {
                     break;
                 }
 
-                match sync_rx.recv_timeout(Duration::from_millis(100)) {
+                match sync_rx.recv_timeout(Duration::from_millis(50)) { // Reduced timeout for lower latency
                     Ok(data) => {
                         if async_tx.send(Ok(data)).await.is_err() {
                             break;
@@ -421,6 +425,36 @@ impl RealTimeTranscription {
         Ok(stream)
     }
 
+    /// Convert stereo to mono by averaging channels
+    fn stereo_to_mono(stereo_data: &[i16]) -> Vec<i16> {
+        let mut mono_data = Vec::with_capacity(stereo_data.len() / 2);
+        
+        for chunk in stereo_data.chunks_exact(2) {
+            // Average left and right channels
+            let left = chunk[0] as i32;
+            let right = chunk[1] as i32;
+            let mono = ((left + right) / 2) as i16;
+            mono_data.push(mono);
+        }
+        
+        mono_data
+    }
+    
+    /// Better resampling from 48000 Hz to 16000 Hz with basic anti-aliasing
+    fn resample_48k_to_16k(input_data: &[i16]) -> Vec<i16> {
+        let mut output_data = Vec::with_capacity(input_data.len() / 3);
+        
+        // Better resampling with simple averaging for anti-aliasing
+        // Instead of simple decimation, average 3 consecutive samples
+        for chunk in input_data.chunks_exact(3) {
+            // Average the 3 samples to reduce aliasing
+            let avg = ((chunk[0] as i32 + chunk[1] as i32 + chunk[2] as i32) / 3) as i16;
+            output_data.push(avg);
+        }
+        
+        output_data
+    }
+
     /// Generic stream builder for different sample formats
     fn build_stream<T>(
         device: &cpal::Device,
@@ -432,6 +466,9 @@ impl RealTimeTranscription {
         T: cpal::Sample + cpal::SizedSample + Send + 'static,
         i16: cpal::FromSample<T>,
     {
+        let channels = config.channels as usize;
+        let sample_rate = config.sample_rate.0;
+        
         let stream = device
             .build_input_stream(
                 config,
@@ -441,11 +478,31 @@ impl RealTimeTranscription {
                         return; // Stop processing audio
                     }
                     
-                    // Convert samples to i16 little-endian bytes (Deepgram's preferred format)
-                    let mut bytes = BytesMut::with_capacity(data.len() * 2);
+                    // Convert samples to i16 first
+                    let mut i16_samples: Vec<i16> = Vec::with_capacity(data.len());
                     for sample in data {
                         let i16_sample: i16 = i16::from_sample(*sample);
-                        bytes.put_i16_le(i16_sample);
+                        i16_samples.push(i16_sample);
+                    }
+                    
+                    // Convert stereo to mono if needed
+                    let mono_samples = if channels == 2 {
+                        Self::stereo_to_mono(&i16_samples)
+                    } else {
+                        i16_samples // Already mono
+                    };
+                    
+                    // Resample if needed (48kHz -> 16kHz)
+                    let final_samples = if sample_rate == 48000 {
+                        Self::resample_48k_to_16k(&mono_samples)
+                    } else {
+                        mono_samples // Already at correct sample rate
+                    };
+                    
+                    // Convert to bytes in little-endian format
+                    let mut bytes = BytesMut::with_capacity(final_samples.len() * 2);
+                    for sample in final_samples {
+                        bytes.put_i16_le(sample);
                     }
                     
                     // Send to crossbeam channel (non-blocking)
@@ -470,8 +527,6 @@ impl RealTimeTranscription {
         app_handle: &AppHandle,
         result: serde_json::Value,
     ) -> Result<()> {
-        info!("Received transcription result: {:?}", result);
-        
         // Parse the Deepgram result format
         if let Some(channel) = result.get("channel") {
             if let Some(alternatives) = channel.get("alternatives") {
@@ -490,9 +545,23 @@ impl RealTimeTranscription {
                                 "confidence": confidence,
                                 "timestamp": chrono::Utc::now().to_rfc3339()
                             }));
+                        } else if result.get("is_final").and_then(|f| f.as_bool()).unwrap_or(false) {
+                            // Only log empty final results, skip interim empty results to reduce noise
+                            let confidence = alternative.get("confidence").and_then(|c| c.as_f64()).unwrap_or(0.0);
+                            if confidence == 0.0 {
+                                warn!("Received empty final transcription with 0 confidence - possible audio quality issue");
+                            }
                         }
                     }
+                } else {
+                    // No alternatives found - could indicate audio processing issues
+                    warn!("No transcription alternatives received - check audio input");
                 }
+            }
+        } else {
+            // This might be a status message or metadata, not a transcription result
+            if result.get("type").and_then(|t| t.as_str()).unwrap_or("") != "Results" {
+                info!("Received non-result message: {}", result.get("type").and_then(|t| t.as_str()).unwrap_or("unknown"));
             }
         }
 
@@ -539,8 +608,8 @@ pub async fn start_microphone_transcription(app_handle: AppHandle) -> Result<Str
         .map_err(|_| "DEEPGRAM_API_KEY environment variable not set".to_string())?;
 
     let config = AudioConfig {
-        sample_rate: 44100,
-        channels: 2,
+        sample_rate: 16000,  // Optimized for speech recognition
+        channels: 1,         // Mono for better speech processing
         is_microphone: true,
     };
 
@@ -567,8 +636,8 @@ pub async fn start_system_audio_transcription(app_handle: AppHandle) -> Result<S
         .map_err(|_| "DEEPGRAM_API_KEY environment variable not set".to_string())?;
 
     let config = AudioConfig {
-        sample_rate: 44100,
-        channels: 2,
+        sample_rate: 16000,  // Optimized for speech recognition
+        channels: 1,         // Mono for better speech processing  
         is_microphone: false,
     };
 

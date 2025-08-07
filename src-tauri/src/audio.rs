@@ -43,9 +43,9 @@ pub struct AudioConfig {
 impl Default for AudioConfig {
     fn default() -> Self {
         Self {
-            sample_rate: 44100,
-            channels: 2,
-            buffer_size: 4096,
+            sample_rate: 16000,  // Optimized for speech recognition
+            channels: 1,         // Mono for better speech processing
+            buffer_size: 2048,   // Smaller buffer for lower latency
         }
     }
 }
