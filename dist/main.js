@@ -1,6 +1,103 @@
-// Import Tauri API
-const { invoke } = window.__TAURI__.tauri;
-const { listen } = window.__TAURI__.event;
+// Robust Tauri API initialization with retry logic
+let invoke, listen, isTauriReady = false;
+
+// Function to check if Tauri is available
+function checkTauriAvailability() {
+    return new Promise((resolve) => {
+        console.log('🔍 Checking for Tauri API availability...');
+        console.log('Environment info:', {
+            userAgent: navigator.userAgent,
+            hasWindow: typeof window !== 'undefined',
+            hasTauriGlobal: typeof window !== 'undefined' && 'window.__TAURI__' in window,
+            windowTauri: typeof window !== 'undefined' ? window.__TAURI__ : 'window undefined'
+        });
+        
+        let attempts = 0;
+        const checkTauri = () => {
+            attempts++;
+            console.log(`🔍 Attempt ${attempts}: Checking Tauri structure:`, {
+                hasTauri: !!window.__TAURI__,
+                tauriKeys: window.__TAURI__ ? Object.keys(window.__TAURI__) : 'none',
+                hasInvoke: !!(window.__TAURI__ && window.__TAURI__.invoke),
+                hasCore: !!(window.__TAURI__ && window.__TAURI__.core),
+                hasTauriProp: !!(window.__TAURI__ && window.__TAURI__.tauri)
+            });
+            
+            // Check for different possible Tauri API structures
+            let tauriInvoke, tauriListen;
+            
+            if (window.__TAURI__) {
+                // Try direct invoke (Tauri v2 style)
+                if (window.__TAURI__.invoke) {
+                    tauriInvoke = window.__TAURI__.invoke;
+                    tauriListen = window.__TAURI__.event?.listen;
+                }
+                // Try core.invoke (alternative structure)
+                else if (window.__TAURI__.core?.invoke) {
+                    tauriInvoke = window.__TAURI__.core.invoke;
+                    tauriListen = window.__TAURI__.event?.listen;
+                }
+                // Try tauri.invoke (nested structure)
+                else if (window.__TAURI__.tauri?.invoke) {
+                    tauriInvoke = window.__TAURI__.tauri.invoke;
+                    tauriListen = window.__TAURI__.event?.listen;
+                }
+            }
+            
+            if (tauriInvoke && tauriListen) {
+                invoke = tauriInvoke;
+                listen = tauriListen;
+                isTauriReady = true;
+                console.log(`✅ Tauri API loaded successfully after ${attempts} attempts`);
+                console.log('Available Tauri APIs:', Object.keys(window.__TAURI__));
+                console.log('Using invoke from:', tauriInvoke.name || 'anonymous function');
+                resolve(true);
+            } else {
+                // Fast initial checks, then slower checks
+                const delay = attempts < 20 ? 50 : attempts < 50 ? 100 : 200;
+                if (attempts <= 5 || attempts % 10 === 0) {
+                    console.log(`⏳ Tauri API not ready yet (attempt ${attempts}), retrying in ${delay}ms...`);
+                }
+                setTimeout(checkTauri, delay);
+            }
+        };
+        checkTauri();
+        
+        // Timeout after 10 seconds (increased from 5)
+        setTimeout(() => {
+            if (!isTauriReady) {
+                console.error('❌ Tauri API not available after 10 seconds');
+                console.error('💡 Make sure you are running the app with "npm run dev" or "tauri dev", not opening the HTML file directly in a browser!');
+                // Create fallback functions
+                invoke = async (cmd, args) => {
+                    const errorMsg = `Tauri not available - command: ${cmd}. Please run the app using "npm run dev" instead of opening HTML directly in browser.`;
+                    console.warn(`🚫 Tauri invoke attempted: ${cmd}`, args);
+                    throw new Error(errorMsg);
+                };
+                listen = async (event, handler) => {
+                    console.warn(`🚫 Tauri listen attempted: ${event}`);
+                    return () => {}; // Return empty unsubscribe function
+                };
+                resolve(false);
+            }
+        }, 10000);
+    });
+}
+
+// Safe invoke function
+async function safeInvoke(command, args = {}) {
+    console.log(`🔧 safeInvoke called: ${command}, isTauriReady: ${isTauriReady}`);
+    if (!isTauriReady) {
+        throw new Error(`Tauri not ready - cannot invoke: ${command}`);
+    }
+    try {
+        console.log(`📞 Invoking Tauri command: ${command}`);
+        return await invoke(command, args);
+    } catch (error) {
+        console.error(`❌ Tauri invoke failed for ${command}:`, error);
+        throw error;
+    }
+}
 
 class MockMateController {
     constructor() {
@@ -36,16 +133,32 @@ class MockMateController {
 
     async init() {
         try {
-            await this.setupTimer();
+            console.log('🚀 Starting MockMate Controller initialization...');
+            
+            console.log('📋 Setting up custom select...');
             await this.setupCustomSelect();
+            
+            console.log('🔗 Setting up event listeners...');
             await this.setupEventListeners();
+            
+            console.log('📡 Setting up Tauri event listeners...');
             await this.setupTauriEventListeners();
+            
+            console.log('📝 Updating transcription state...');
             await this.updateTranscriptionState();
+            
+            console.log('🎤 Initializing audio...');
             await this.initializeAudio();
-            console.log('MockMate Controller initialized successfully');
+            
+            console.log('✅ MockMate Controller initialized successfully');
+            this.showNotification('MockMate initialized successfully!', 'success');
         } catch (error) {
-            console.error('Failed to initialize MockMate Controller:', error);
-            this.showNotification('Failed to initialize application', 'error');
+            console.error('❌ Failed to initialize MockMate Controller:', error);
+            if (error.message && error.message.includes('Tauri not available')) {
+                this.showNotification('Please run the app with "npm run dev" - not by opening HTML directly', 'warning');
+            } else {
+                this.showNotification('Failed to initialize application', 'error');
+            }
         }
     }
 
@@ -88,6 +201,20 @@ class MockMateController {
         const uploadResumeBtn = document.getElementById('uploadResumeBtn');
         const sendBtn = document.getElementById('sendBtn');
         const questionInput = document.getElementById('questionInput');
+
+        // Check if all elements exist
+        console.log('🔍 Button elements check:', {
+            customSelect: !!customSelect,
+            micBtn: !!micBtn,
+            systemSoundBtn: !!systemSoundBtn,
+            closeBtn: !!closeBtn,
+            clearBtn: !!clearBtn,
+            generateAnswerBtn: !!generateAnswerBtn,
+            analyzeScreenBtn: !!analyzeScreenBtn,
+            uploadResumeBtn: !!uploadResumeBtn,
+            sendBtn: !!sendBtn,
+            questionInput: !!questionInput
+        });
 
         // Custom select dropdown
         customSelect.addEventListener('click', () => {
@@ -177,10 +304,10 @@ class MockMateController {
 
     async initializeAudio() {
         try {
-            const devices = await invoke('get_audio_devices');
+            const devices = await safeInvoke('get_audio_devices');
             console.log('Available audio devices:', devices);
             
-            const status = await invoke('check_audio_status');
+            const status = await safeInvoke('check_audio_status');
             console.log('Audio status:', status);
             this.updateAudioStatus(status);
         } catch (error) {
@@ -195,15 +322,15 @@ class MockMateController {
             
             if (this.isMicOn) {
                 // Stop microphone
-                await invoke('stop_audio_stream');
-                await invoke('stop_deepgram_transcription');
+                await safeInvoke('stop_audio_stream');
+                await safeInvoke('stop_deepgram_transcription');
                 this.isMicOn = false;
                 micBtn.classList.remove('active');
                 this.showNotification('Microphone stopped', 'success');
             } else {
                 // Start microphone
-                await invoke('start_microphone_capture');
-                await invoke('start_deepgram_transcription');
+                await safeInvoke('start_microphone_capture');
+                await safeInvoke('start_deepgram_transcription');
                 this.isMicOn = true;
                 micBtn.classList.add('active');
                 this.showNotification('Microphone started', 'success');
@@ -213,7 +340,11 @@ class MockMateController {
             this.updateRecordingStatus();
         } catch (error) {
             console.error('Failed to toggle microphone:', error);
-            this.showNotification(`Failed to ${this.isMicOn ? 'stop' : 'start'} microphone: ${error}`, 'error');
+            if (error.message && error.message.includes('Tauri not ready')) {
+                this.showNotification('Please wait for app to finish initializing...', 'warning');
+            } else {
+                this.showNotification(`Failed to ${this.isMicOn ? 'stop' : 'start'} microphone: ${error}`, 'error');
+            }
         }
     }
 
@@ -223,15 +354,15 @@ class MockMateController {
             
             if (this.isSystemSoundOn) {
                 // Stop system sound
-                await invoke('stop_audio_stream');
-                await invoke('stop_deepgram_transcription');
+                await safeInvoke('stop_audio_stream');
+                await safeInvoke('stop_deepgram_transcription');
                 this.isSystemSoundOn = false;
                 systemSoundBtn.classList.remove('active');
                 this.showNotification('System sound stopped', 'success');
             } else {
                 // Start system sound
-                await invoke('start_system_audio_capture');
-                await invoke('start_deepgram_transcription');
+                await safeInvoke('start_system_audio_capture');
+                await safeInvoke('start_deepgram_transcription');
                 this.isSystemSoundOn = true;
                 systemSoundBtn.classList.add('active');
                 this.showNotification('System sound started', 'success');
@@ -241,7 +372,11 @@ class MockMateController {
             this.updateRecordingStatus();
         } catch (error) {
             console.error('Failed to toggle system sound:', error);
-            this.showNotification(`Failed to ${this.isSystemSoundOn ? 'stop' : 'start'} system sound: ${error}`, 'error');
+            if (error.message && error.message.includes('Tauri not ready')) {
+                this.showNotification('Please wait for app to finish initializing...', 'warning');
+            } else {
+                this.showNotification(`Failed to ${this.isSystemSoundOn ? 'stop' : 'start'} system sound: ${error}`, 'error');
+            }
         }
     }
 
@@ -249,17 +384,17 @@ class MockMateController {
         try {
             // Stop any active recordings first
             if (this.isMicOn || this.isSystemSoundOn) {
-                await invoke('stop_audio_stream');
-                await invoke('stop_deepgram_transcription');
+                await safeInvoke('stop_audio_stream');
+                await safeInvoke('stop_deepgram_transcription');
             }
             
             // Close the application
-            await invoke('close_application');
+            await safeInvoke('close_application');
         } catch (error) {
             console.error('Failed to close application:', error);
             // Try force close as fallback
             try {
-                await invoke('force_close_application');
+                await safeInvoke('force_close_application');
             } catch (forceError) {
                 console.error('Failed to force close application:', forceError);
             }
@@ -289,7 +424,7 @@ class MockMateController {
                 job_description: jobDescriptionInput.value.trim() || null
             };
 
-            const answer = await invoke('generate_ai_answer', { payload });
+            const answer = await safeInvoke('generate_ai_answer', { payload });
             
             // Display the answer in a new popup or update the transcription area
             this.displayAnswer(answer);
@@ -297,7 +432,11 @@ class MockMateController {
             
         } catch (error) {
             console.error('Failed to generate answer:', error);
-            this.showNotification(`Failed to generate answer: ${error}`, 'error');
+            if (error.message && error.message.includes('Tauri not ready')) {
+                this.showNotification('Please wait for app to finish initializing...', 'warning');
+            } else {
+                this.showNotification(`Failed to generate answer: ${error}`, 'error');
+            }
         }
     }
 
@@ -314,13 +453,18 @@ class MockMateController {
 
     async uploadResume() {
         try {
-            const result = await invoke('upload_resume');
+            const result = await safeInvoke('upload_resume');
             this.showNotification(result, 'info');
         } catch (error) {
             console.error('Failed to upload resume:', error);
-            this.showNotification(`Failed to upload resume: ${error}`, 'error');
+            if (error.message && error.message.includes('Tauri not ready')) {
+                this.showNotification('Please wait for app to finish initializing...', 'warning');
+            } else {
+                this.showNotification(`Failed to upload resume: ${error}`, 'error');
+            }
         }
     }
+
 
     async sendManualQuestion() {
         try {
@@ -342,7 +486,7 @@ class MockMateController {
             };
 
             this.showNotification('Processing your question...', 'info');
-            const answer = await invoke('generate_ai_answer', { payload });
+            const answer = await safeInvoke('generate_ai_answer', { payload });
             
             this.displayAnswer(answer);
             questionInput.value = '';
@@ -350,7 +494,11 @@ class MockMateController {
             
         } catch (error) {
             console.error('Failed to send manual question:', error);
-            this.showNotification(`Failed to process question: ${error}`, 'error');
+            if (error.message && error.message.includes('Tauri not ready')) {
+                this.showNotification('Please wait for app to finish initializing...', 'warning');
+            } else {
+                this.showNotification(`Failed to process question: ${error}`, 'error');
+            }
         }
     }
 
@@ -437,7 +585,7 @@ class MockMateController {
         notification.style.cssText = `
             position: fixed;
             top: 20px;
-            right: 20px;
+            left: 20px;
             padding: 12px 20px;
             border-radius: 8px;
             color: white;
@@ -445,7 +593,7 @@ class MockMateController {
             z-index: 1000;
             max-width: 300px;
             word-wrap: break-word;
-            animation: slideIn 0.3s ease;
+            animation: slideInFromLeft 0.3s ease;
         `;
         
         switch (type) {
@@ -479,23 +627,78 @@ class MockMateController {
 // Add CSS for notification animations
 const style = document.createElement('style');
 style.textContent = `
-    @keyframes slideIn {
-        from { transform: translateX(100%); opacity: 0; }
+    @keyframes slideInFromLeft {
+        from { transform: translateX(-100%); opacity: 0; }
         to { transform: translateX(0); opacity: 1; }
     }
     
     @keyframes slideOut {
         from { transform: translateX(0); opacity: 1; }
-        to { transform: translateX(100%); opacity: 0; }
+        to { transform: translateX(-100%); opacity: 0; }
     }
 `;
 document.head.appendChild(style);
 
-// Initialize the controller when the DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
-    console.log('DOM loaded, initializing MockMate Controller...');
-    new MockMateController();
+// Initialize the controller when the DOM is loaded AND Tauri is ready
+document.addEventListener('DOMContentLoaded', async () => {
+    console.log('DOM loaded, waiting for Tauri...');
+    
+    // Show loading state
+    showInitializationState('loading');
+    
+    // Wait for Tauri to be ready
+    const tauriReady = await checkTauriAvailability();
+    
+    if (tauriReady) {
+        console.log('✅ Tauri is ready, initializing MockMate Controller...');
+        showInitializationState('ready');
+        
+        // Only create controller after Tauri is confirmed ready
+        new MockMateController();
+    } else {
+        console.log('⚠️ Tauri not available, initializing with limited functionality...');
+        showInitializationState('error');
+        
+        // Still create controller for UI functionality, but backend calls will be handled gracefully
+        new MockMateController();
+    }
 });
+
+// Show initialization state to user
+function showInitializationState(state) {
+    const transcriptionEl = document.getElementById('transcriptionText');
+    const statusPill = document.querySelector('.status-pill');
+    
+    switch (state) {
+        case 'loading':
+            transcriptionEl.textContent = 'Initializing MockMate... Please wait.';
+            transcriptionEl.className = 'transcription-text listening';
+            statusPill.textContent = 'Initializing...';
+            statusPill.style.background = 'rgba(255, 165, 2, 0.15)';
+            statusPill.style.color = 'var(--warning)';
+            statusPill.style.borderColor = 'rgba(255, 165, 2, 0.2)';
+            break;
+            
+        case 'ready':
+            transcriptionEl.textContent = 'Enable Mic or System Sound to start transcription...';
+            transcriptionEl.className = 'transcription-text';
+            statusPill.textContent = 'Live';
+            statusPill.style.background = 'rgba(0, 200, 150, 0.15)';
+            statusPill.style.color = 'var(--success)';
+            statusPill.style.borderColor = 'rgba(0, 200, 150, 0.2)';
+            break;
+            
+        case 'error':
+            transcriptionEl.textContent = 'Please run with "npm run dev" - HTML opened directly in browser';
+            transcriptionEl.className = 'transcription-text';
+            transcriptionEl.style.color = 'var(--warning)';
+            statusPill.textContent = 'Error';
+            statusPill.style.background = 'rgba(255, 71, 87, 0.15)';
+            statusPill.style.color = 'var(--danger)';
+            statusPill.style.borderColor = 'rgba(255, 71, 87, 0.2)';
+            break;
+    }
+}
 
 // Global error handler
 window.addEventListener('error', (event) => {

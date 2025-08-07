@@ -338,6 +338,14 @@
             </div>
         </div>
     </div>
+    <script type="module">
+        // Initialize Tauri API
+        if (window.__TAURI__) {
+            console.log('✅ Tauri API detected on window');
+        } else {
+            console.log('⚠️ Tauri API not found on window');
+        }
+    </script>
     <script src="main.js"></script>
 </body>
 </html>
