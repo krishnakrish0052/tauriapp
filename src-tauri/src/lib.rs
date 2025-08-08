@@ -10,7 +10,6 @@ use parking_lot::Mutex;
 
 pub mod audio;
 mod websocket;
-mod deepgram;
 mod openai;
 mod pollinations;
 mod wasapi_loopback;
@@ -49,14 +48,12 @@ pub fn run() -> Result<()> {
             show_ai_response_window,
             hide_ai_response_window,
             send_ai_response_data,
-            // New real-time transcription commands
+            // Real-time transcription commands
             realtime_transcription::start_microphone_transcription,
             realtime_transcription::start_system_audio_transcription,
             realtime_transcription::stop_transcription,
             realtime_transcription::get_transcription_status,
-            // Keep old deepgram commands for backward compatibility during transition
-            deepgram::start_deepgram_transcription,
-            deepgram::stop_deepgram_transcription,
+            realtime_transcription::get_deepgram_config,
             generate_ai_answer,
             analyze_screen_content,
             update_interview_context,
