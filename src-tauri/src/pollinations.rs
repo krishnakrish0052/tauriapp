@@ -205,24 +205,24 @@ Please provide a comprehensive and professional answer to this interview questio
                     let text = String::from_utf8_lossy(&bytes);
                     buffer.push_str(&text);
                     
-                    // Process SSE lines
-                    let lines: Vec<&str> = buffer.lines().collect();
-                    if lines.len() > 1 {
-                        // Process all complete lines except the last (incomplete) one
-                        for line in &lines[..lines.len()-1] {
-                            if let Some(content) = self.parse_sse_line(line) {
-                                if content == "[DONE]" {
-                                    info!("SSE stream completed");
-                                    return Ok(full_response);
-                                }
-                                
-                                // Call the callback with the new content
-                                on_token(&content);
+                    // Process complete lines in buffer
+                    while let Some(newline_pos) = buffer.find('\n') {
+                        let line = buffer[..newline_pos].trim().to_string();
+                        buffer.drain(..newline_pos + 1);
+                        
+                        if let Some(content) = self.parse_sse_line(&line) {
+                            if content == "[DONE]" {
+                                info!("SSE stream completed with [DONE]");
+                                return Ok(full_response);
+                            }
+                            
+                            if !content.is_empty() {
                                 full_response.push_str(&content);
+                                // Send accumulated text to callback, not just the token
+                                on_token(&full_response);
+                                info!("Streamed token: '{}', total length: {}", content.chars().take(50).collect::<String>(), full_response.len());
                             }
                         }
-                        // Keep the last incomplete line in buffer
-                        buffer = lines.last().unwrap_or(&"").to_string();
                     }
                 }
                 Err(e) => {
@@ -233,11 +233,11 @@ Please provide a comprehensive and professional answer to this interview questio
         }
         
         // Process any remaining content in buffer
-        if !buffer.is_empty() {
-            if let Some(content) = self.parse_sse_line(&buffer) {
-                if content != "[DONE]" {
-                    on_token(&content);
+        if !buffer.trim().is_empty() {
+            if let Some(content) = self.parse_sse_line(buffer.trim()) {
+                if content != "[DONE]" && !content.is_empty() {
                     full_response.push_str(&content);
+                    on_token(&full_response);
                 }
             }
         }
@@ -245,6 +245,7 @@ Please provide a comprehensive and professional answer to this interview questio
         if full_response.trim().is_empty() {
             Err(anyhow::anyhow!("Empty response from Pollinations streaming API"))
         } else {
+            info!("Streaming completed. Total response length: {}", full_response.len());
             Ok(full_response.trim().to_string())
         }
     }
@@ -253,43 +254,76 @@ Please provide a comprehensive and professional answer to this interview questio
     fn parse_sse_line(&self, line: &str) -> Option<String> {
         let line = line.trim();
         
+        // Skip empty lines and comments
+        if line.is_empty() || line.starts_with(":") {
+            return None;
+        }
+        
+        // Handle SSE event lines
+        if line.starts_with("event: ") {
+            return None; // We don't process event types, just data
+        }
+        
         // Handle SSE data lines
         if line.starts_with("data: ") {
-            let json_str = &line[6..]; // Remove "data: " prefix
+            let data_content = &line[6..]; // Remove "data: " prefix
             
             // Check for completion marker
-            if json_str.trim() == "[DONE]" {
+            if data_content.trim() == "[DONE]" {
                 return Some("[DONE]".to_string());
             }
             
             // Try to parse as JSON for OpenAI-compatible format
-            match serde_json::from_str::<Value>(json_str) {
-                Ok(json) => {
-                    // Look for content in various possible structures
-                    if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
-                        if let Some(first_choice) = choices.first() {
-                            if let Some(delta) = first_choice.get("delta") {
-                                if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
-                                    return Some(content.to_string());
+            if data_content.trim().starts_with("{") {
+                match serde_json::from_str::<Value>(data_content) {
+                    Ok(json) => {
+                        // Look for content in OpenAI-compatible structure
+                        if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
+                            if let Some(first_choice) = choices.first() {
+                                if let Some(delta) = first_choice.get("delta") {
+                                    if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
+                                        return Some(content.to_string());
+                                    }
+                                }
+                                // Also check for direct text field in choice
+                                if let Some(text) = first_choice.get("text").and_then(|t| t.as_str()) {
+                                    return Some(text.to_string());
                                 }
                             }
                         }
+                        
+                        // Look for direct text field
+                        if let Some(text) = json.get("text").and_then(|t| t.as_str()) {
+                            return Some(text.to_string());
+                        }
+                        
+                        // Look for content field directly
+                        if let Some(content) = json.get("content").and_then(|c| c.as_str()) {
+                            return Some(content.to_string());
+                        }
+                        
+                        // Look for message content
+                        if let Some(message) = json.get("message") {
+                            if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
+                                return Some(content.to_string());
+                            }
+                        }
                     }
-                    
-                    // Fallback: look for direct text field
-                    if let Some(text) = json.get("text").and_then(|t| t.as_str()) {
-                        return Some(text.to_string());
+                    Err(parse_err) => {
+                        // Log JSON parsing error but continue
+                        info!("JSON parse error (treating as raw text): {}", parse_err);
+                        // If not valid JSON, treat as raw text
+                        return Some(data_content.to_string());
                     }
                 }
-                Err(_) => {
-                    // If not JSON, treat the content after "data: " as raw text
-                    return Some(json_str.to_string());
-                }
+            } else {
+                // Not JSON, treat as raw text content
+                return Some(data_content.to_string());
             }
         }
         
-        // Handle non-SSE format - if the line looks like text content directly
-        else if !line.is_empty() && !line.starts_with(":") && !line.starts_with("event:") {
+        // Handle direct text content (non-SSE format)
+        else if !line.starts_with("event:") && !line.starts_with("id:") && !line.starts_with("retry:") {
             return Some(line.to_string());
         }
         
@@ -391,21 +425,24 @@ Please provide a comprehensive and professional answer to this interview questio
                     let text = String::from_utf8_lossy(&bytes);
                     buffer.push_str(&text);
                     
-                    // Process SSE lines
-                    let lines: Vec<&str> = buffer.lines().collect();
-                    if lines.len() > 1 {
-                        for line in &lines[..lines.len()-1] {
-                            if let Some(content) = self.parse_sse_line(line) {
-                                if content == "[DONE]" {
-                                    info!("POST SSE stream completed");
-                                    return Ok(full_response);
-                                }
-                                
-                                on_token(&content);
+                    // Process complete lines in buffer (same logic as GET streaming)
+                    while let Some(newline_pos) = buffer.find('\n') {
+                        let line = buffer[..newline_pos].trim().to_string();
+                        buffer.drain(..newline_pos + 1);
+                        
+                        if let Some(content) = self.parse_sse_line(&line) {
+                            if content == "[DONE]" {
+                                info!("POST SSE stream completed with [DONE]");
+                                return Ok(full_response);
+                            }
+                            
+                            if !content.is_empty() {
                                 full_response.push_str(&content);
+                                // Send accumulated text to callback, not just the token
+                                on_token(&full_response);
+                                info!("POST streamed token: '{}', total length: {}", content.chars().take(50).collect::<String>(), full_response.len());
                             }
                         }
-                        buffer = lines.last().unwrap_or(&"").to_string();
                     }
                 }
                 Err(e) => {
@@ -416,11 +453,11 @@ Please provide a comprehensive and professional answer to this interview questio
         }
         
         // Process remaining content
-        if !buffer.is_empty() {
-            if let Some(content) = self.parse_sse_line(&buffer) {
-                if content != "[DONE]" {
-                    on_token(&content);
+        if !buffer.trim().is_empty() {
+            if let Some(content) = self.parse_sse_line(buffer.trim()) {
+                if content != "[DONE]" && !content.is_empty() {
                     full_response.push_str(&content);
+                    on_token(&full_response);
                 }
             }
         }
@@ -428,6 +465,7 @@ Please provide a comprehensive and professional answer to this interview questio
         if full_response.trim().is_empty() {
             Err(anyhow::anyhow!("Empty response from Pollinations POST streaming API"))
         } else {
+            info!("POST streaming completed. Total response length: {}", full_response.len());
             Ok(full_response.trim().to_string())
         }
     }

@@ -393,9 +393,12 @@ async fn pollinations_generate_answer_streaming(
                 text: Some(token.to_string()),
                 error: None,
             };
-            if let Err(e) = send_ai_response_data(app_handle_clone.clone(), data) {
-                error!("Failed to send streaming token to UI: {}", e);
-            }
+            let app_handle_for_async = app_handle_clone.clone();
+            tokio::spawn(async move {
+                if let Err(e) = send_ai_response_data(app_handle_for_async, data).await {
+                    error!("Failed to send streaming token to UI: {}", e);
+                }
+            });
         }
     ).await;
 
@@ -407,9 +410,13 @@ async fn pollinations_generate_answer_streaming(
                 text: Some(full_response.clone()),
                 error: None,
             };
-            if let Err(e) = send_ai_response_data(app_handle, data) {
-                error!("Failed to send completion signal to UI: {}", e);
-            }
+            let app_handle_for_complete = app_handle.clone();
+            let completion_data = data;
+            tokio::spawn(async move {
+                if let Err(e) = send_ai_response_data(app_handle_for_complete, completion_data).await {
+                    error!("Failed to send completion signal to UI: {}", e);
+                }
+            });
             Ok(full_response)
         },
         Err(e) => {
@@ -419,9 +426,11 @@ async fn pollinations_generate_answer_streaming(
                 text: None,
                 error: Some(e.to_string()),
             };
-            if let Err(send_err) = send_ai_response_data(app_handle, data) {
-                error!("Failed to send error signal to UI: {}", send_err);
-            }
+            tokio::spawn(async move {
+                if let Err(send_err) = send_ai_response_data(app_handle, data).await {
+                    error!("Failed to send error signal to UI: {}", send_err);
+                }
+            });
             Err(e.to_string())
         }
     }
@@ -474,9 +483,12 @@ async fn pollinations_generate_answer_post_streaming(
                 text: Some(token.to_string()),
                 error: None,
             };
-            if let Err(e) = send_ai_response_data(app_handle_clone.clone(), data) {
-                error!("Failed to send streaming token to UI: {}", e);
-            }
+            let app_handle_for_async = app_handle_clone.clone();
+            tokio::spawn(async move {
+                if let Err(e) = send_ai_response_data(app_handle_for_async, data).await {
+                    error!("Failed to send streaming token to UI: {}", e);
+                }
+            });
         }
     ).await;
 
@@ -488,9 +500,12 @@ async fn pollinations_generate_answer_post_streaming(
                 text: Some(full_response.clone()),
                 error: None,
             };
-            if let Err(e) = send_ai_response_data(app_handle, data) {
-                error!("Failed to send completion signal to UI: {}", e);
-            }
+            let app_handle_for_complete = app_handle.clone();
+            tokio::spawn(async move {
+                if let Err(e) = send_ai_response_data(app_handle_for_complete, data).await {
+                    error!("Failed to send completion signal to UI: {}", e);
+                }
+            });
             Ok(full_response)
         },
         Err(e) => {
@@ -500,9 +515,12 @@ async fn pollinations_generate_answer_post_streaming(
                 text: None,
                 error: Some(e.to_string()),
             };
-            if let Err(send_err) = send_ai_response_data(app_handle, data) {
-                error!("Failed to send error signal to UI: {}", send_err);
-            }
+            let app_handle_for_error = app_handle.clone();
+            tokio::spawn(async move {
+                if let Err(send_err) = send_ai_response_data(app_handle_for_error, data).await {
+                    error!("Failed to send error signal to UI: {}", send_err);
+                }
+            });
             Err(e.to_string())
         }
     }
@@ -894,7 +912,7 @@ fn create_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
         })
         .unwrap_or((1920, 1080)); // fallback to common resolution
     
-    let max_window_height = (screen_size.1 as f64 * 0.8) as f64; // Use 80% of screen height
+    let _max_window_height = (screen_size.1 as f64 * 0.8) as f64; // Use 80% of screen height
     
     // Create response window configuration
     let window_config = tauri::WebviewWindowBuilder::new(
@@ -903,11 +921,11 @@ fn create_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
         tauri::WebviewUrl::App("ai-response.html".into())
     )
     .title("AI Response")
-    .inner_size(1150.0, 100.0) // Start with minimal height for auto-sizing
-    .min_inner_size(1150.0, 80.0)  // Lower minimum for auto-sizing
-    .max_inner_size(1150.0, max_window_height)
+    .inner_size(1150.0, 150.0) // Start with minimal height for auto-sizing
+    .min_inner_size(1150.0, 100.0)  // Lower minimum for auto-sizing
+    // Remove max size constraint to allow dynamic resizing
     .position(response_x as f64, response_y as f64)
-    .resizable(false)
+    .resizable(true) // Make resizable for programmatic resizing
     .fullscreen(false)
     .always_on_top(true)
     .skip_taskbar(true)
@@ -958,46 +976,75 @@ fn close_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 fn resize_ai_response_window(app_handle: AppHandle, height: u32) -> Result<String, String> {
-    info!("Auto-resizing AI response window to height: {}", height);
+    info!("🔧 RESIZE REQUEST: height={}, timestamp={}", height, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
     
     if let Some(window) = app_handle.get_webview_window("ai-response") {
+        // Get current size first for debugging
+        let current_size = window.outer_size().map_err(|e| {
+            error!("❌ Failed to get current window size: {}", e);
+            e.to_string()
+        })?;
+        
         // Get screen dimensions for dynamic max height
         let max_height = window.current_monitor()
-            .map_err(|e| e.to_string())?
+            .map_err(|e| {
+                error!("❌ Failed to get monitor info: {}", e);
+                e.to_string()
+            })?
             .map(|monitor| {
                 let size = monitor.size();
-                (size.height as f64 * 0.85) as u32 // Use 85% of screen height
+                let calculated_max = (size.height as f64 * 0.85) as u32;
+                info!("📐 Screen size: {}x{}, calculated max height: {}", size.width, size.height, calculated_max);
+                calculated_max
             })
             .unwrap_or(918); // fallback to 85% of 1080p
         
         // Lower minimum height for auto-sizing content
-        let clamped_height = height.max(80).min(max_height); // Clamp between 80 and screen height
-        
-        // Get current size to check if resize is needed
-        let current_size = window.outer_size().map_err(|e| e.to_string())?;
+        let clamped_height = height.max(80).min(max_height);
         let size_diff = (current_size.height as i32 - clamped_height as i32).abs();
         
-        // More sensitive resize threshold for auto-height (more than 5px)
-        if size_diff > 5 {
+        info!("📊 RESIZE DEBUG: current={}px, requested={}px, clamped={}px, max={}px, diff={}px", 
+              current_size.height, height, clamped_height, max_height, size_diff);
+        
+        // Always try to resize if there's any difference - remove the 5px threshold
+        if current_size.height != clamped_height {
+            info!("🎯 Attempting resize from {}px to {}px...", current_size.height, clamped_height);
+            
             match window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
                 width: 1150,
                 height: clamped_height,
             })) {
                 Ok(_) => {
-                    info!("AI response window auto-resized: {}px -> {}px (diff: {}px)", current_size.height, clamped_height, size_diff);
-                    Ok(format!("Auto-resized: {} -> {}", current_size.height, clamped_height))
+                    info!("✅ AI response window successfully resized: {}px -> {}px (diff: {}px)", current_size.height, clamped_height, size_diff);
+                    
+                    // Verify the resize worked by checking the new size
+                    match window.outer_size() {
+                        Ok(new_size) => {
+                            info!("🔍 Post-resize verification: actual new size is {}px", new_size.height);
+                            if new_size.height == clamped_height {
+                                Ok(format!("✅ Resized successfully: {} -> {}", current_size.height, new_size.height))
+                            } else {
+                                warn!("⚠️ Resize mismatch: expected {}px but got {}px", clamped_height, new_size.height);
+                                Ok(format!("⚠️ Partial resize: {} -> {} (expected {})", current_size.height, new_size.height, clamped_height))
+                            }
+                        }
+                        Err(e) => {
+                            warn!("❌ Failed to verify resize: {}", e);
+                            Ok(format!("✅ Resize attempted: {} -> {}", current_size.height, clamped_height))
+                        }
+                    }
                 }
                 Err(e) => {
-                    error!("Failed to auto-resize AI response window: {}", e);
-                    Err(format!("Auto-resize failed: {}", e))
+                    error!("❌ Failed to resize AI response window: {}", e);
+                    Err(format!("❌ Resize failed: {}", e))
                 }
             }
         } else {
-            info!("No auto-resize needed: current={}px, requested={}px (diff: {}px)", current_size.height, clamped_height, size_diff);
-            Ok(format!("No resize needed: {}", current_size.height))
+            info!("➡️ No resize needed: window already at target height {}px", current_size.height);
+            Ok(format!("➡️ Already correct size: {}px", current_size.height))
         }
     } else {
-        warn!("AI response window not found for auto-resize");
+        error!("❌ AI response window 'ai-response' not found for resize");
         Err("AI response window not found".to_string())
     }
 }
@@ -1030,7 +1077,7 @@ fn create_ai_response_window_at_startup(app_handle: AppHandle) -> Result<String,
         })
         .unwrap_or((1920, 1080)); // fallback to common resolution
     
-    let max_window_height = (screen_size.1 as f64 * 0.8) as f64; // Use 80% of screen height
+    let _max_window_height = (screen_size.1 as f64 * 0.8) as f64; // Use 80% of screen height
     
     // Create response window configuration (hidden by default)
     let window_config = tauri::WebviewWindowBuilder::new(
@@ -1039,11 +1086,11 @@ fn create_ai_response_window_at_startup(app_handle: AppHandle) -> Result<String,
         tauri::WebviewUrl::App("ai-response.html".into())
     )
     .title("AI Response")
-    .inner_size(1150.0, 100.0) // Start with minimal height for auto-sizing
-    .min_inner_size(1150.0, 80.0)  // Lower minimum for auto-sizing
-    .max_inner_size(1150.0, max_window_height)
+    .inner_size(1150.0, 150.0) // Start with minimal height for auto-sizing
+    .min_inner_size(1150.0, 100.0)  // Lower minimum for auto-sizing
+    // Remove max size constraint to allow dynamic resizing
     .position(response_x as f64, response_y as f64)
-    .resizable(false)
+    .resizable(true) // Make resizable for programmatic resizing
     .fullscreen(false)
     .always_on_top(true)
     .skip_taskbar(true)
@@ -1121,19 +1168,24 @@ struct AiResponseData {
 }
 
 #[tauri::command]
-fn send_ai_response_data(app_handle: AppHandle, data: AiResponseData) -> Result<String, String> {
-    info!("Sending AI response data: {:?}", data.message_type);
+async fn send_ai_response_data(app_handle: AppHandle, data: AiResponseData) -> Result<String, String> {
+    info!("🚀 RUST DEBUG: send_ai_response_data called with message_type: {:?}", data.message_type);
     
+    // Check if AI response window exists
     if let Some(window) = app_handle.get_webview_window("ai-response") {
+        info!("✅ RUST DEBUG: AI response window found, attempting to show and send data");
+        
         // First ensure the window is visible
         if let Err(e) = window.show() {
-            error!("Failed to show AI response window: {}", e);
+            error!("❌ RUST DEBUG: Failed to show AI response window: {}", e);
+        } else {
+            info!("✅ RUST DEBUG: AI response window shown successfully");
         }
         
         // Send data to the AI response window via JavaScript evaluation
         let js_code = match data.message_type.as_str() {
             "stream" => {
-                let text = data.text.unwrap_or_default();
+                let text = data.text.as_ref().map(|t| t.clone()).unwrap_or_default();
                 let escaped_text = text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
                 format!(r#"
                     if (window.updateContent) {{
@@ -1144,7 +1196,7 @@ fn send_ai_response_data(app_handle: AppHandle, data: AiResponseData) -> Result<
                 "#, escaped_text)
             }
             "complete" => {
-                let text = data.text.unwrap_or_default();
+                let text = data.text.as_ref().map(|t| t.clone()).unwrap_or_default();
                 let escaped_text = text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
                 format!(r#"
                     if (window.updateContent) {{
@@ -1153,7 +1205,7 @@ fn send_ai_response_data(app_handle: AppHandle, data: AiResponseData) -> Result<
                 "#, escaped_text)
             }
             "error" => {
-                let error_msg = data.error.unwrap_or_default();
+                let error_msg = data.error.as_ref().map(|e| e.clone()).unwrap_or_default();
                 let escaped_error = error_msg.replace('\\', "\\\\").replace('"', "\\\"");
                 format!(r#"
                     if (window.updateContent) {{
@@ -1166,13 +1218,42 @@ fn send_ai_response_data(app_handle: AppHandle, data: AiResponseData) -> Result<
             }
         };
         
+        info!("🚀 RUST DEBUG: About to evaluate JavaScript code: {}", js_code.chars().take(200).collect::<String>() + "...");
+        
         match window.eval(&js_code) {
             Ok(_) => {
-                info!("AI response data sent successfully");
+                info!("✅ RUST DEBUG: JavaScript evaluation successful - AI response data sent successfully");
+                
+                // For stream messages, also trigger an immediate resize calculation from Rust side
+                if data.message_type == "stream" || data.message_type == "complete" {
+                    info!("🔄 RUST DEBUG: Triggering automatic resize after content update");
+                    
+                    // Give the DOM a moment to update, then trigger resize
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    
+                    // Calculate approximate height based on text length (rough estimate)
+                    let text_length = data.text.as_ref().map(|t| t.len()).unwrap_or(0);
+                    let estimated_lines = (text_length / 80).max(1) + 2; // ~80 chars per line + padding
+                    let line_height = 27; // 21px font size * 1.3 line height
+                    let header_height = 50;
+                    let padding = 52; // content padding + window padding
+                    
+                    let estimated_height = (estimated_lines * line_height + header_height + padding).min(900) as u32; // Cap at reasonable height
+                    
+                    info!("📏 RUST DEBUG: Auto-resize calculation: text_length={}, estimated_lines={}, estimated_height={}px", text_length, estimated_lines, estimated_height);
+                    
+                    // Trigger resize from Rust side
+                    if let Err(resize_err) = resize_ai_response_window(app_handle.clone(), estimated_height) {
+                        warn!("❌ RUST DEBUG: Auto-resize failed: {}", resize_err);
+                    } else {
+                        info!("✅ RUST DEBUG: Auto-resize triggered successfully from Rust");
+                    }
+                }
+                
                 Ok("Data sent to AI response window".to_string())
             }
             Err(e) => {
-                error!("Failed to send data to AI response window: {}", e);
+                error!("❌ RUST DEBUG: JavaScript evaluation failed - Failed to send data to AI response window: {}", e);
                 Err(format!("Failed to send data: {}", e))
             }
         }
