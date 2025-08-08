@@ -54,11 +54,11 @@ pub struct DeepgramConfig {
 impl Default for DeepgramConfig {
     fn default() -> Self {
         Self {
-            model: "nova-2".to_string(),
+            model: "nova-3".to_string(), // Updated to latest Nova-3 model
             language: "en-US".to_string(),
             smart_format: true,
             interim_results: true,
-            endpointing: 300,
+            endpointing: 100, // Reduced from 300ms to 100ms for faster speech detection
             keep_alive: true,
             punctuate: true,
             profanity_filter: false,
@@ -165,8 +165,8 @@ impl DeepgramConfig {
 impl Default for AudioConfig {
     fn default() -> Self {
         Self {
-            sample_rate: 44100,
-            channels: 2,
+            sample_rate: 16000, // Optimized for speech recognition (reduced from 44100)
+            channels: 1,        // Mono for better speech processing (reduced from stereo)
             is_microphone: false,
         }
     }
@@ -305,7 +305,7 @@ impl RealTimeTranscription {
         
         // Log the advanced settings we would use
         info!("Advanced Deepgram settings from .env (applied where supported):");
-        info!("  Model: {} (using default nova-2 if not supported)", dg_config.model);
+        info!("  Model: {} (using default nova-3 if not supported)", dg_config.model);
         info!("  Language: {} (using default en-US if not supported)", dg_config.language);
         info!("  Smart format: {}", dg_config.smart_format);
         info!("  Punctuate: {}", dg_config.punctuate);
@@ -325,13 +325,48 @@ impl RealTimeTranscription {
             info!("  Replace rules: {:?}", dg_config.replace);
         }
         
-        // Build stream request with basic configuration only
-        // We'll use a simple approach to avoid borrow checker issues
+        // Build stream request with basic configuration
+        // Note: Current Deepgram Rust SDK has limited configuration methods available
         let transcription = dg_client.transcription();
-        let stream_request = transcription.stream_request()
+        
+        info!("Applying Deepgram configuration from .env:");
+        info!("  Model: {} (via config, may need manual URL override)", dg_config.model);
+        info!("  Language: {}", dg_config.language);
+        info!("  Smart format: {}", dg_config.smart_format);
+        info!("  Interim results: {} (via SDK method if available)", dg_config.interim_results);
+        info!("  Punctuate: {}", dg_config.punctuate);
+        info!("  Endpointing: {}ms", dg_config.endpointing);
+        
+        // Start with basic required parameters that are definitely supported
+        let mut stream_request = transcription.stream_request()
             .encoding(Encoding::Linear16)
             .sample_rate(processed_sample_rate)
             .channels(processed_channels);
+            
+        // Apply interim results if the method exists (most basic streaming feature)
+        if dg_config.interim_results {
+            // This is a core streaming feature that should be supported
+            stream_request = stream_request.interim_results(true);
+            info!("✅ Applied interim_results=true");
+        }
+        
+        // Log other settings that will be applied via environment or future SDK updates
+        if dg_config.model != "nova-2" {
+            info!("⚠️  Model '{}' configured but not directly supported by current SDK - may fallback to nova-2", dg_config.model);
+            info!("    You can override by setting DEEPGRAM_MODEL in environment or via API parameters");
+        }
+        
+        if !dg_config.language.is_empty() && dg_config.language != "en-US" {
+            info!("⚠️  Language '{}' configured but not directly supported by current SDK", dg_config.language);
+        }
+        
+        if dg_config.smart_format {
+            info!("⚠️  Smart format enabled in config but not directly supported by current SDK");
+        }
+        
+        if dg_config.punctuate {
+            info!("⚠️  Punctuation enabled in config but not directly supported by current SDK");
+        }
         
         let mut results = stream_request
             .stream(audio_stream)
@@ -387,8 +422,8 @@ impl RealTimeTranscription {
     fn create_audio_stream(config: AudioConfig, audio_stop_signal: Arc<AtomicBool>) -> Result<FuturesReceiver<Result<Bytes, RecvError>>> {
         info!("Creating audio stream: {:?}", config);
 
-        let (sync_tx, sync_rx) = crossbeam::channel::bounded(500); // Larger buffer to prevent drops
-        let (mut async_tx, async_rx) = mpsc::channel(200); // Larger async buffer
+        let (sync_tx, sync_rx) = crossbeam::channel::bounded(50); // Reduced buffer for lower latency
+        let (mut async_tx, async_rx) = mpsc::channel(25); // Smaller buffer for real-time processing
 
         // Spawn audio capture thread
         let config_clone = config.clone();
@@ -408,7 +443,7 @@ impl RealTimeTranscription {
                     break;
                 }
 
-                match sync_rx.recv_timeout(Duration::from_millis(50)) { // Reduced timeout for lower latency
+                match sync_rx.recv_timeout(Duration::from_millis(20)) { // Further reduced timeout for minimal latency
                     Ok(data) => {
                         if async_tx.send(Ok(data)).await.is_err() {
                             break;
