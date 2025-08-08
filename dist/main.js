@@ -107,7 +107,7 @@ class MockMateController {
         this.currentTranscription = '';
         this.fullTranscription = '';  // Cumulative transcription text
         this.interimTranscription = ''; // Current interim text
-        this.selectedModel = 'gpt-4-turbo';
+        this.selectedModel = 'llama-3.1-70b-instruct';
         this.selectedProvider = 'openai';
         this.aiResponseWindow = null;
         this.models = [];
@@ -261,9 +261,19 @@ class MockMateController {
         // Set default model for the provider if current model doesn't belong to this provider
         const currentModelBelongsToProvider = this.models.some(model => (model.id || model.value) === this.selectedModel);
         if (!currentModelBelongsToProvider && this.models.length > 0) {
-            // Prefer id (from backend), fallback to value (legacy fallback list)
-            this.selectedModel = this.models[0].id || this.models[0].value;
-            console.log(`🎯 Set default model for ${this.selectedProvider}: ${this.selectedModel}`);
+            // Try to find "Llama Fast" first, otherwise use first model
+            const llamaModel = this.models.find(m => 
+                m.name.toLowerCase().includes('llama') && 
+                (m.name.toLowerCase().includes('fast') || m.name.toLowerCase().includes('roblox'))
+            );
+            if (llamaModel) {
+                this.selectedModel = llamaModel.id || llamaModel.value;
+                console.log(`🎯 Set default model to Llama Fast: ${this.selectedModel}`);
+            } else {
+                // Fallback to first model
+                this.selectedModel = this.models[0].id || this.models[0].value;
+                console.log(`🎯 Set fallback default model for ${this.selectedProvider}: ${this.selectedModel}`);
+            }
         }
         
         console.log(`📋 Updated models for ${this.selectedProvider}:`, this.models.map(m => m.name));
@@ -327,11 +337,27 @@ class MockMateController {
             selectContainer.appendChild(item);
         });
         
-        // Update selected model display to show default model
+        // Update selected model display to show default model (prefer Llama Fast)
         if (this.models.length > 0) {
-            const selectedModelInfo = this.models.find(m => (m.id || m.value) === this.selectedModel) || this.models[0];
+            // Try to find and select "Llama Fast Roblox" by default if no specific model selected yet
+            const llamaModel = this.models.find(m => 
+                m.name.toLowerCase().includes('llama') && 
+                (m.name.toLowerCase().includes('fast') || m.name.toLowerCase().includes('roblox'))
+            );
+            
+            let selectedModelInfo;
+            if (llamaModel && (!this.selectedModel || this.selectedModel === 'gpt-4-turbo')) {
+                // Use Llama Fast if available and no specific model selected yet
+                this.selectedModel = llamaModel.id || llamaModel.value;
+                selectedModelInfo = llamaModel;
+                console.log('🦙 Auto-selected Llama Fast Roblox as default model');
+            } else {
+                // Use currently selected model or fallback to first
+                selectedModelInfo = this.models.find(m => (m.id || m.value) === this.selectedModel) || this.models[0];
+            }
+            
             const selectedModelNameEl = document.getElementById('selectedModelName');
-            if (selectedModelNameEl) {
+            if (selectedModelNameEl && selectedModelInfo) {
                 selectedModelNameEl.textContent = selectedModelInfo.name;
             }
         }
@@ -581,8 +607,13 @@ class MockMateController {
         const selectedId = this.selectedModel;
         const isValid = validModels.some(m => (m.id || m.value) === selectedId);
         if (!isValid) {
-            // Pick first valid model for the current provider
-            const fallback = validModels[0];
+            // Try to find "Llama Fast" first, otherwise use first valid model
+            const llamaModel = validModels.find(m => 
+                m.name.toLowerCase().includes('llama') && 
+                (m.name.toLowerCase().includes('fast') || m.name.toLowerCase().includes('roblox'))
+            );
+            const fallback = llamaModel || validModels[0];
+            
             this.selectedModel = fallback.id || fallback.value;
             // Reflect in UI if elements exist
             const nameEl = document.getElementById('selectedModelName');
@@ -596,11 +627,14 @@ class MockMateController {
     }
 
     async showResponseWindow() {
-        // Try native window, fallback to in-UI window
+        // Always ensure the in-UI response window is visible
+        this.ensureUiResponseWindow();
+        
+        // Also try native window if available
         try {
             await safeInvoke('show_ai_response_window');
         } catch (_) {
-            this.ensureUiResponseWindow();
+            // Native window not available, using in-UI window only
         }
     }
 
@@ -726,7 +760,8 @@ class MockMateController {
             this.ensureValidModelSelection();
             this.showNotification('Generating AI answer...', 'info');
             
-            // Ensure response window visible regardless of backend
+            // ALWAYS create/show AI response window in initial state when Generate is clicked
+            this.createAiResponseWindowInInitialState();
             await this.showResponseWindow();
             
             // Build a system prompt to steer interviewer-style answers
@@ -820,7 +855,9 @@ class MockMateController {
 
             // Validate selection before sending
             this.ensureValidModelSelection();
-            // Ensure response window visible
+            
+            // ALWAYS create/show AI response window in initial state when sending manual question
+            this.createAiResponseWindowInInitialState();
             await this.showResponseWindow();
 
             // Build system prompt
@@ -941,11 +978,8 @@ class MockMateController {
         const transcriptionEl = document.getElementById('transcriptionText');
         transcriptionEl.textContent = '';
         this.updateTranscriptionState();
-        // Also close AI response window if open
-        if (this.aiResponseWindow) {
-            this.aiResponseWindow.remove();
-            this.aiResponseWindow = null;
-        }
+        // DON'T automatically close AI response window on clear transcription
+        // Let user manually close it if they want to
     }
 
     updateRecordingStatus() {
@@ -1003,18 +1037,20 @@ class MockMateController {
         
         this.aiResponseWindow = document.createElement('div');
         this.aiResponseWindow.className = 'ai-response-window';
-        // Get screen dimensions for dynamic sizing
+        
+        // Calculate position to keep window 400px from screen bottom
         const screenHeight = window.screen.availHeight || window.screen.height || 1080;
-        const maxWindowHeight = Math.floor(screenHeight * 0.8); // Use 80% of screen height
+        const maxAllowedHeight = 400; // Maximum height from screen bottom
+        const windowTop = Math.max(mainWindowRect.bottom + 5, screenHeight - maxAllowedHeight);
         
         this.aiResponseWindow.style.cssText = `
             position: absolute;
-            top: ${mainWindowRect.bottom + 5}px;
+            top: ${windowTop}px;
             left: ${mainWindowRect.left}px;
             width: ${mainWindowRect.width}px;
             height: 150px;
             min-height: 100px;
-            max-height: ${maxWindowHeight}px;
+            max-height: ${maxAllowedHeight}px;
             background: rgba(0, 0, 0, 0.85);
             border-radius: 16px;
             border: 1px solid rgba(255, 255, 255, 0.1);
@@ -1062,28 +1098,21 @@ class MockMateController {
             padding: 4px;
             border-radius: 4px;
             transition: all 0.2s ease;
+            display: none;
         `;
         closeBtn.innerHTML = '<span class="material-icons" style="font-size: 18px;">close</span>';
         closeBtn.onclick = async () => {
+            console.log('🗑️ Closing AI response window completely');
+            
+            // Close and clean up the in-UI window completely
+            this.closeAiResponseWindowCompletely();
+            
+            // Also try to close native Tauri window if it exists
             try {
-                // Try to close the native Tauri window first
                 await safeInvoke('close_ai_response_window');
             } catch (error) {
-                console.log('Native window close failed, closing in-UI window:', error);
+                console.log('Native window close failed (expected if not using native window):', error);
             }
-            
-            // Always clean up the in-UI window as well
-            // Disconnect observers and timers
-            if (this.aiWindowResizeObserver) {
-                try { this.aiWindowResizeObserver.disconnect(); } catch {}
-                this.aiWindowResizeObserver = null;
-            }
-            if (this.aiWindowSizePoll) {
-                clearInterval(this.aiWindowSizePoll);
-                this.aiWindowSizePoll = null;
-            }
-            this.aiResponseWindow.remove();
-            this.aiResponseWindow = null;
         };
         closeBtn.onmouseover = () => closeBtn.style.background = 'rgba(255, 255, 255, 0.1)';
         closeBtn.onmouseout = () => closeBtn.style.background = 'none';
@@ -1097,7 +1126,7 @@ class MockMateController {
             padding: 16px;
             color: var(--text-primary);
             line-height: 1.6;
-            font-size: 14px;
+            font-size: 7px;
             overflow-y: auto;
             flex: 1;
             max-height: none; // Will be set dynamically
@@ -1184,24 +1213,61 @@ class MockMateController {
     }
     
     // Adjust AI window height based on content
-    // NOTE: Disabled for Tauri windows - the separate ai-response.html handles window resizing
     adjustAiWindowHeight() {
         if (!this.aiResponseWindow) return;
         
         const content = this.aiResponseWindow.querySelector('.ai-response-content');
         if (!content) return;
         
-        // For in-UI response windows (overlay mode), just log the content size
-        // The Tauri window handles its own resizing via ai-response.html
-        console.log('📊 Content updated (Tauri window handles resizing):', {
+        console.log('📊 Adjusting AI window height:', {
             textLength: content.textContent ? content.textContent.length : 0,
             scrollHeight: content.scrollHeight,
             offsetHeight: content.offsetHeight
         });
         
-        // Only do basic layout adjustments for in-UI windows
+        // Calculate appropriate height based on content
+        const contentHeight = content.scrollHeight;
+        const headerHeight = 45; // Header height in pixels
+        const padding = 20; // Extra padding
+        const maxHeight = Math.floor((window.screen.availHeight || 1080) * 0.8);
+        const minHeight = 100;
+        
+        // Limit max height to 400px from screen bottom
+        const screenHeight = window.screen.availHeight || window.screen.height || 1080;
+        const maxAllowedHeight = 400;
+        
+        // Calculate new window height with 400px limit
+        let newHeight = Math.min(Math.max(contentHeight + headerHeight + padding, minHeight), maxAllowedHeight);
+        
+        // Update the window height
+        this.aiResponseWindow.style.height = `${newHeight}px`;
+        
+        // Ensure content area can scroll if needed
         content.style.height = 'auto';
-        content.style.maxHeight = 'none';
+        content.style.maxHeight = `${newHeight - headerHeight - 32}px`; // Account for padding
+        content.style.overflowY = contentHeight > (newHeight - headerHeight - 32) ? 'auto' : 'hidden';
+        
+        console.log(`🔧 Window height adjusted to: ${newHeight}px (content: ${contentHeight}px)`);
+    }
+    
+    // Reset AI window to initial small height
+    resetAiWindowHeight() {
+        if (!this.aiResponseWindow) return;
+        
+        console.log('🔄 Resetting AI window height to initial size');
+        
+        const initialHeight = 150;
+        const maxAllowedHeight = 400; // Limit to 400px from screen bottom
+        const actualHeight = Math.min(initialHeight, maxAllowedHeight);
+        
+        this.aiResponseWindow.style.height = `${actualHeight}px`;
+        
+        const content = this.aiResponseWindow.querySelector('.ai-response-content');
+        if (content) {
+            content.style.height = 'auto';
+            content.style.maxHeight = `${actualHeight - 45 - 32}px`; // Header + padding
+            content.style.overflowY = 'hidden';
+        }
     }
     
     // Throttled version of height adjustment for streaming content
@@ -1221,13 +1287,84 @@ class MockMateController {
     // Ensure an in-UI AI response window exists (fallback when native window not available)
     ensureUiResponseWindow() {
         if (!this.aiResponseWindow) {
+            console.log('🪟 Creating new AI response window via ensureUiResponseWindow');
             this.createAiResponseWindow();
+        } else {
+            console.log('✅ AI response window already exists');
         }
         return this.aiResponseWindow.querySelector('.ai-response-content');
     }
 
+    // Create AI response window in clean initial state
+    createAiResponseWindowInInitialState() {
+        console.log('🪟 Creating AI response window in initial state...');
+        
+        // Completely clean up any existing window first
+        this.closeAiResponseWindowCompletely();
+        
+        // Create fresh window
+        const contentEl = this.createAiResponseWindow();
+        
+        // Set initial content
+        contentEl.textContent = 'Generating response...';
+        contentEl.style.fontStyle = 'italic';
+        contentEl.style.opacity = '0.7';
+        contentEl.style.color = 'var(--text-primary)';
+        
+        // Reset to initial height
+        this.resetAiWindowHeight();
+        
+        console.log('✅ AI response window created in initial state');
+        return contentEl;
+    }
+
+    // Completely close and clean up AI response window
+    closeAiResponseWindowCompletely() {
+        console.log('🗑️ Completely closing and cleaning up AI response window...');
+        
+        // Stop any streaming
+        this.isStreaming = false;
+        this.streamingText = '';
+        
+        // Clean up observers and timers
+        if (this.aiWindowResizeObserver) {
+            try {
+                this.aiWindowResizeObserver.disconnect();
+            } catch (e) {
+                console.warn('Failed to disconnect ResizeObserver:', e);
+            }
+            this.aiWindowResizeObserver = null;
+        }
+        
+        if (this.aiWindowSizePoll) {
+            clearInterval(this.aiWindowSizePoll);
+            this.aiWindowSizePoll = null;
+        }
+        
+        if (this.heightAdjustmentTimeout) {
+            clearTimeout(this.heightAdjustmentTimeout);
+            this.heightAdjustmentTimeout = null;
+        }
+        
+        // Remove DOM element completely
+        if (this.aiResponseWindow) {
+            this.aiResponseWindow.remove();
+            this.aiResponseWindow = null;
+        }
+        
+        console.log('✅ AI response window completely closed and cleaned up');
+    }
+
     // Send data to AI response window (for Tauri-based window communication)
     async sendToAiWindow(type, data) {
+        console.log(`📤 sendToAiWindow called with type: ${type}, window exists: ${!!this.aiResponseWindow}`);
+        
+        // If window was closed, don't send data to it
+        if (!this.aiResponseWindow) {
+            console.log('⚠️ AI response window was closed, ignoring sendToAiWindow call');
+            return;
+        }
+        
         // Handle streaming state management
         if (type === 'stream') {
             if (!this.isStreaming) {
@@ -1235,6 +1372,8 @@ class MockMateController {
                 this.streamingText = '';
                 this.isStreaming = true;
                 console.log('🚀 Starting new streaming session');
+                // Reset window height at start of new stream
+                this.resetAiWindowHeight();
             }
             
             // For streaming, data should be the new token/chunk to add
@@ -1258,7 +1397,17 @@ class MockMateController {
 
         // Always mirror into the in-UI response window so users can see content immediately
         const mirrorToUi = () => {
-            const contentEl = this.ensureUiResponseWindow();
+            if (!this.aiResponseWindow) {
+                console.log('⚠️ Window closed during mirrorToUi, skipping');
+                return;
+            }
+            
+            const contentEl = this.aiResponseWindow.querySelector('.ai-response-content');
+            if (!contentEl) {
+                console.log('⚠️ Content element not found, skipping mirrorToUi');
+                return;
+            }
+            
             if (type === 'stream') {
                 // Show accumulated streaming text with cursor
                 contentEl.innerHTML = this.streamingText + '<span class="cursor">|</span>';
@@ -1268,11 +1417,18 @@ class MockMateController {
                 // Show final text without cursor
                 const finalText = typeof data === 'string' ? data : data?.text || this.streamingText;
                 contentEl.textContent = finalText;
+                // Reset content styling
+                contentEl.style.fontStyle = 'normal';
+                contentEl.style.opacity = '1';
                 // Adjust window height for final content (immediate)
                 this.adjustAiWindowHeight();
             } else if (type === 'error') {
                 const errorMsg = typeof data === 'string' ? data : data?.error || 'Unknown error';
                 contentEl.textContent = `Error: ${errorMsg}`;
+                // Reset content styling
+                contentEl.style.fontStyle = 'normal';
+                contentEl.style.opacity = '1';
+                contentEl.style.color = 'var(--danger)';
                 // Adjust window height for error content (immediate)
                 this.adjustAiWindowHeight();
             }
