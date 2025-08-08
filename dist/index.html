@@ -61,7 +61,7 @@
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
             border: 1px solid rgba(255, 255, 255, 0.08);
-            overflow: hidden;
+            overflow: visible; /* Allow dropdowns/overlays to render above */
             position: relative;
         }
         
@@ -82,7 +82,7 @@
             border-bottom: 1px solid var(--border);
             background: var(--gradient-panel);
             position: relative;
-            z-index: 2;
+            z-index: 2000; /* Ensure header (and dropdown within) sits above other sections */
             gap: 12px;
             flex-shrink: 0;
         }
@@ -150,7 +150,7 @@
             align-items: stretch;
             border-bottom: 1px solid var(--border);
             position: relative;
-            z-index: 2;
+            z-index: 1;
             flex: 1;
             background: rgba(0,0,0,0.7);
         }
@@ -213,7 +213,7 @@
         .input-section {
             display: flex; align-items: center; padding: 12px 16px; gap: 8px;
             background: rgba(0,0,0,0.7); border-radius: 0 0 16px 16px;
-            position: relative; z-index: 2;
+            position: relative; z-index: 1;
             flex-shrink: 0;
         }
         
@@ -272,25 +272,34 @@
         }
 
         /* Custom Select Dropdown */
-        .custom-select-wrapper { position: relative; }
+        .custom-select-wrapper { position: relative; z-index: 3000; }
         .custom-select {
             background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border);
             border-radius: 8px; color: var(--text-primary); font-size: 13px;
             padding: 6px 10px; cursor: pointer; transition: all 0.2s ease;
             display: flex; align-items: center; gap: 8px;
+            /* keep trigger at normal width so it doesn't collide with next field */
         }
         .custom-select:hover { background: rgba(255, 255, 255, 0.1); border-color: var(--border-active); }
         .custom-select .model-icon { width: 16px; height: 16px; }
         .custom-select .arrow { margin-left: auto; font-size: 18px; transition: transform 0.2s ease; }
+        #selectedModelName { flex: 1; min-width: 0; }
         .custom-select.open .arrow { transform: rotate(180deg); }
 
         .custom-select-items {
-            position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+            position: absolute; top: calc(100% + 4px); left: -50%; right: auto;
+            width: 150%; /* 50% wider than trigger, shifted left */
             background: var(--panel-bg); border: 1px solid var(--border);
-            border-radius: 8px; z-index: 10;
+            border-radius: 8px; z-index: 10000; /* Highest within app UI */
             backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-            overflow: hidden; display: none;
+            display: none;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            max-height: 240px; /* Make dropdown scrollable when long */
+            overflow-y: auto;
+            scrollbar-width: none; /* Firefox */
+            -ms-overflow-style: none; /* IE and Edge */
         }
+        .custom-select-items::-webkit-scrollbar { display: none; }
         .custom-select-item {
             padding: 8px 12px; cursor: pointer; display: flex;
             align-items: center; gap: 8px; font-size: 13px;
@@ -315,6 +324,40 @@
             border-color: var(--border-active);
         }
 
+        /* Provider Switch */
+        .provider-switch {
+            display: flex;
+            gap: 4px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 2px;
+        }
+        
+        .provider-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 12px;
+            font-weight: 500;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+        
+        .provider-btn:hover {
+            color: var(--text-primary);
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        .provider-btn.active {
+            color: var(--accent);
+            background: rgba(0, 212, 255, 0.15);
+            box-shadow: 0 0 4px rgba(0, 212, 255, 0.2);
+        }
+
         @media (max-width: 768px) {
             .header { justify-content: center; }
             .brand { width: 100%; justify-content: center; margin-bottom: 16px; }
@@ -334,9 +377,12 @@
                     <div class="status-pill">Live</div>
                 </div>
                 <div class="controls-bar">
+                    <div class="control-item">
+                        <span class="material-icons control-icon">smart_toy</span>
+                        <div class="provider-switch"></div>
+                    </div>
                     <div class="control-item custom-select-wrapper">
                         <div class="custom-select" id="customSelect">
-                            <svg class="model-icon" id="selectedModelIcon" viewBox="0 0 24 24"><path fill="currentColor" d="M19.7,6.9c-0.5-0.7-1.2-1.3-2-1.8c-1.6-1-3.5-1.5-5.6-1.5c-2.9,0-5.6,1.1-7.6,3.1c-2,2-3.1,4.7-3.1,7.6c0,2.9,1.1,5.6,3.1,7.6c2,2,4.7,3.1,7.6,3.1c2.1,0,4.1-0.5,5.8-1.6c1.7-1,3.2-2.5,4.1-4.3c0.2-0.4,0.3-0.8,0.3-1.2c0-1.1-0.9-2-2-2c-0.5,0-0.9,0.2-1.3,0.5c-0.9,0.7-2,1.2-3.2,1.5c-1.4,0.3-2.8,0.2-4.2-0.5c-1.3-0.6-2.5-1.6-3.3-2.9c-0.8-1.2-1.2-2.7-1.2-4.2c0-1.5,0.4-3,1.2-4.2c0.8-1.2,2-2.2,3.3-2.9c1.4-0.6,2.8-0.8,4.2-0.5c1.2,0.3,2.3,0.8,3.2,1.5c0.4,0.3,0.8,0.5,1.3,0.5c1.1,0,2-0.9,2-2C20,7.7,19.9,7.3,19.7,6.9z M12,14c-1.1,0-2-0.9-2-2s0.9-2,2-2s2,0.9,2,2S13.1,14,12,14z"></path></svg>
                             <span id="selectedModelName">GPT-4 Turbo</span>
                             <span class="material-icons arrow">expand_more</span>
                         </div>

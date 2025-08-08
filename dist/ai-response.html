@@ -35,25 +35,32 @@
             color: var(--text-primary);
             display: flex;
             justify-content: center;
-            align-items: center;
+            align-items: stretch;
             width: 1150px;
-            height: 180px;
+            height: auto;
+            min-height: 80px;
             line-height: 1.6;
             font-size: 14px;
-            overflow: hidden;
+            overflow: visible;
+            /* Remove any max-height constraints */
+            max-height: none;
         }
         
         .app-container {
             width: 100%;
-            height: 100%;
+            height: auto;
+            min-height: 80px;
             display: flex;
             flex-direction: column;
             position: relative;
+            /* Remove any height constraints */
+            max-height: none;
         }
         
         .response-window {
             width: 100%;
-            height: 100%;
+            height: auto;
+            min-height: 80px;
             background: rgba(0, 0, 0, 0.80);
             border-radius: 16px;
             display: flex;
@@ -61,8 +68,10 @@
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
             border: 1px solid rgba(255, 255, 255, 0.08);
-            overflow: hidden;
+            overflow: visible;
             position: relative;
+            /* Remove any height constraints */
+            max-height: none;
         }
         
         .response-window::before {
@@ -126,21 +135,21 @@
         .utility-btn.danger:hover { background: rgba(255, 71, 87, 0.2); color: var(--danger); border-color: var(--danger); }
         
         .content-area {
-            padding: 0; 
+            padding: 16px; 
             margin: 0;
             background: transparent; 
             font-size: 21px;
             font-weight: bold;
-            line-height: 1.0; 
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            right: 3px;
-            bottom: 3px;
+            line-height: 1.3; 
+            height: auto;
             overflow-y: auto;
+            overflow-x: visible;
             word-wrap: break-word;
             white-space: pre-wrap;
             z-index: 2;
+            min-height: 40px;
+            /* Allow natural expansion up to screen limit */
+            flex: 1 1 auto;
         }
         
         .streaming-indicator {
@@ -214,6 +223,25 @@
         let currentText = '';
         let typewriterTimeout = null;
         
+        // Wait for Tauri API to be available
+        function waitForTauri(callback, maxAttempts = 50) {
+            let attempts = 0;
+            const checkTauri = () => {
+                if (window.__TAURI__ && window.__TAURI__.invoke) {
+                    console.log('✅ Tauri API is now available');
+                    callback();
+                } else if (attempts < maxAttempts) {
+                    attempts++;
+                    console.log(`⏳ Waiting for Tauri API... (${attempts}/${maxAttempts})`);
+                    setTimeout(checkTauri, 100);
+                } else {
+                    console.warn('❌ Tauri API not available after max attempts');
+                    callback(); // Continue without Tauri
+                }
+            };
+            checkTauri();
+        }
+        
         // Initialize when the window is loaded
         window.addEventListener('DOMContentLoaded', () => {
             // Get references to elements
@@ -243,7 +271,11 @@
                 }
             });
             
-            console.log('AI Response window loaded and ready');
+            // Wait for Tauri API and then set up observers
+            waitForTauri(() => {
+                setupAutoHeightObservers(contentArea);
+                console.log('AI Response window loaded and ready with auto-height observers');
+            });
         });
         
         // Global function to update content (called from Tauri)
@@ -253,14 +285,13 @@
             
             switch (type) {
                 case 'stream':
-                    // Clear any existing typewriter effect
-                    if (typewriterTimeout) {
-                        clearTimeout(typewriterTimeout);
-                    }
-                    
-                    // Start typewriter effect
+                    // For streaming, directly update content without typewriter effect
+                    // to avoid delays in height adjustment
                     currentText = data.text || '';
-                    startTypewriter(contentArea);
+                    contentArea.innerHTML = currentText + '<span class="cursor">|</span>';
+                    
+                    // Adjust window height immediately for each stream update
+                    adjustWindowHeight();
                     break;
                     
                 case 'complete':
@@ -270,7 +301,8 @@
                     }
                     
                     // Final response
-                    contentArea.innerHTML = data.text || '';
+                    currentText = data.text || '';
+                    contentArea.innerHTML = currentText;
                     adjustWindowHeight();
                     break;
                     
@@ -303,18 +335,120 @@
             typeNext();
         }
         
-        // Adjust window height based on content
+        // Adjust window height based on content automatically
+        let resizeTimeout = null;
         function adjustWindowHeight() {
-            const contentArea = document.getElementById('contentArea');
-            if (contentArea && window.__TAURI__) {
-                const contentHeight = contentArea.scrollHeight;
-                const padding = 20; // Top and bottom padding
-                const totalHeight = Math.min(Math.max(contentHeight + padding, 100), 500);
-                
-                // Use Tauri to resize the window
-                window.__TAURI__.invoke('resize_ai_response_window', { height: totalHeight })
-                    .catch(err => console.log('Resize failed:', err));
+            // Throttle resize calls to avoid excessive API calls during streaming
+            if (resizeTimeout) {
+                clearTimeout(resizeTimeout);
             }
+            
+            resizeTimeout = setTimeout(() => {
+                const contentArea = document.getElementById('contentArea');
+                if (contentArea && window.__TAURI__) {
+                    // Use multiple animation frames for accurate measurement
+                    requestAnimationFrame(() => {
+                        requestAnimationFrame(() => {
+                            // Get screen dimensions for dynamic max height
+                            const screenHeight = window.screen.availHeight || window.screen.height || 1080;
+                            const maxScreenHeight = Math.floor(screenHeight * 0.85); // Use 85% of screen height
+                            
+                            // Force a complete layout calculation
+                            document.body.style.height = 'auto';
+                            
+                            // Get the natural height of the entire document
+                            const documentHeight = Math.max(
+                                document.body.scrollHeight,
+                                document.body.offsetHeight,
+                                document.documentElement.clientHeight,
+                                document.documentElement.scrollHeight,
+                                document.documentElement.offsetHeight
+                            );
+                            
+                            // Add some padding for comfort
+                            const padding = 20;
+                            const minHeight = 100;
+                            const maxHeight = maxScreenHeight;
+                            
+                            // Calculate total window height needed based on document height
+                            const totalHeight = Math.min(Math.max(documentHeight + padding, minHeight), maxHeight);
+                            
+                            console.log('🔧 Auto-adjusting window height:', {
+                                documentScrollHeight: document.body.scrollHeight,
+                                documentOffsetHeight: document.body.offsetHeight,
+                                calculatedHeight: documentHeight,
+                                finalHeight: totalHeight,
+                                contentText: contentArea.textContent?.substring(0, 50) + '...'
+                            });
+                            
+                            // Use Tauri to resize the window to match content
+                            if (window.__TAURI__ && window.__TAURI__.invoke) {
+                                window.__TAURI__.invoke('resize_ai_response_window', { height: totalHeight })
+                                    .then(() => console.log(`✅ Window auto-resized to ${totalHeight}px`))
+                                    .catch(err => console.warn('❌ Resize failed:', err));
+                            } else {
+                                console.warn('⚠️ Tauri API not available for resize, using fallback');
+                                // Fallback: Try to communicate with parent window or use postMessage
+                                try {
+                                    if (window.parent && window.parent.postMessage) {
+                                        window.parent.postMessage({
+                                            type: 'resize_request',
+                                            height: totalHeight
+                                        }, '*');
+                                    }
+                                } catch (e) {
+                                    console.error('Fallback resize failed:', e);
+                                }
+                            }
+                        });
+                    });
+                }
+                resizeTimeout = null;
+            }, 30); // Very responsive - 30ms throttle
+        }
+        
+        // Set up observers for automatic height adjustment
+        function setupAutoHeightObservers(contentArea) {
+            if (!contentArea) return;
+            
+            console.log('🔧 Setting up auto-height observers');
+            
+            // ResizeObserver to watch for size changes
+            if (typeof ResizeObserver !== 'undefined') {
+                const resizeObserver = new ResizeObserver((entries) => {
+                    console.log('📏 ResizeObserver triggered');
+                    adjustWindowHeight();
+                });
+                resizeObserver.observe(contentArea);
+                resizeObserver.observe(document.body);
+            }
+            
+            // MutationObserver to watch for content changes
+            if (typeof MutationObserver !== 'undefined') {
+                const mutationObserver = new MutationObserver((mutations) => {
+                    console.log('🔄 MutationObserver triggered:', mutations.length, 'mutations');
+                    adjustWindowHeight();
+                });
+                
+                mutationObserver.observe(contentArea, {
+                    childList: true,
+                    subtree: true,
+                    characterData: true,
+                    attributes: false
+                });
+            }
+            
+            // Also trigger on window resize
+            window.addEventListener('resize', () => {
+                console.log('📐 Window resize event');
+                adjustWindowHeight();
+            });
+            
+            // Initial height adjustment
+            setTimeout(() => {
+                console.log('🚀 Initial height adjustment');
+                adjustWindowHeight();
+            }, 100);
         }
     </script>
 </body>

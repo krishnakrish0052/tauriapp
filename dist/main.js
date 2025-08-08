@@ -108,35 +108,28 @@ class MockMateController {
         this.fullTranscription = '';  // Cumulative transcription text
         this.interimTranscription = ''; // Current interim text
         this.selectedModel = 'gpt-4-turbo';
+        this.selectedProvider = 'openai';
         this.aiResponseWindow = null;
-        this.models = [
-            { 
-                name: 'GPT-4 Turbo', 
-                value: 'gpt-4-turbo',
-                icon: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12,2C6.5,2,2,6.5,2,12s4.5,10,10,10s10-4.5,10-10S17.5,2,12,2z M12,20c-4.4,0-8-3.6-8-8s3.6-8,8-8s8,3.6,8,8S16.4,20,12,20z M12,6c-3.3,0-6,2.7-6,6s2.7,6,6,6s6-2.7,6-6S15.3,6,12,6z M12,16c-2.2,0-4-1.8-4-4s1.8-4,4-4s4,1.8,4,4S14.2,16,12,16z"></path></svg>' 
-            },
-            { 
-                name: 'GPT-3.5 Turbo', 
-                value: 'gpt-3.5-turbo',
-                icon: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12,2C6.5,2,2,6.5,2,12s4.5,10,10,10s10-4.5,10-10S17.5,2,12,2z M12,20c-4.4,0-8-3.6-8-8s3.6-8,8-8s8,3.6,8,8S16.4,20,12,20z"></path></svg>' 
-            },
-            { 
-                name: 'Gemini Pro', 
-                value: 'gemini-pro',
-                icon: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M19.7,6.9c-0.5-0.7-1.2-1.3-2-1.8c-1.6-1-3.5-1.5-5.6-1.5c-2.9,0-5.6,1.1-7.6,3.1c-2,2-3.1,4.7-3.1,7.6c0,2.9,1.1,5.6,3.1,7.6c2,2,4.7,3.1,7.6,3.1c2.1,0,4.1-0.5,5.8-1.6c1.7-1,3.2-2.5,4.1-4.3c0.2-0.4,0.3-0.8,0.3-1.2c0-1.1-0.9-2-2-2c-0.5,0-0.9,0.2-1.3,0.5c-0.9,0.7-2,1.2-3.2,1.5c-1.4,0.3-2.8,0.2-4.2-0.5c-1.3-0.6-2.5-1.6-3.3-2.9c-0.8-1.2-1.2-2.7-1.2-4.2c0-1.5,0.4-3,1.2-4.2c0.8-1.2,2-2.2,3.3-2.9c1.4-0.6,2.8-0.8,4.2-0.5c1.2,0.3,2.3,0.8,3.2,1.5c0.4,0.3,0.8,0.5,1.3,0.5c1.1,0,2-0.9,2-2C20,7.7,19.9,7.3,19.7,6.9z M12,14c-1.1,0-2-0.9-2-2s0.9-2,2-2s2,0.9,2,2S13.1,14,12,14z"></path></svg>' 
-            },
-            { 
-                name: 'Claude 3.5', 
-                value: 'claude-3-5-sonnet',
-                icon: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-12h2v4h-2zm0 6h2v2h-2z"></path></svg>' 
-            }
-        ];
+        this.models = [];
+        this.providers = [];
+        this.allModels = []; // All available models from backend
+        this.streamingText = ''; // Accumulated streaming text
+        this.isStreaming = false; // Track streaming state
+        this.heightAdjustmentTimeout = null; // Throttling for height adjustments
+        this.aiWindowResizeObserver = null; // ResizeObserver for AI content
+        this.aiWindowSizePoll = null; // Fallback polling handle
         this.init();
     }
 
     async init() {
         try {
             console.log('🚀 Starting MockMate Controller initialization...');
+            
+            console.log('📊 Loading AI providers and models...');
+            await this.loadAIProvidersAndModels();
+            
+            console.log('⚙️ Setting up provider switch...');
+            await this.setupProviderSwitch();
             
             console.log('📋 Setting up custom select...');
             await this.setupCustomSelect();
@@ -174,22 +167,174 @@ class MockMateController {
         setInterval(updateTime, 1000);
     }
 
-    setupCustomSelect() {
+    async loadAIProvidersAndModels() {
+        try {
+            // Always load providers and models via backend so headers/env are respected
+            this.providers = await safeInvoke('get_ai_providers');
+            console.log('✅ Loaded AI providers:', this.providers);
+
+            this.allModels = await safeInvoke('get_available_models');
+            console.log('✅ Loaded AI models:', this.allModels);
+            // Normalize legacy value field to id if needed
+            this.allModels = this.allModels.map(m => ({
+                id: m.id || m.value,
+                name: m.name,
+                provider: m.provider,
+                icon: m.icon || ''
+            }));
+            console.log('🔁 Normalized models:', this.allModels);
+
+            // If providers include Pollinations, default to it; otherwise keep current
+            if (this.providers.some(p => p.id === 'pollinations')) {
+                this.selectedProvider = 'pollinations';
+            }
+
+            // Set default models based on selected provider
+            this.updateModelsForProvider();
+        } catch (err) {
+            console.error('❌ Failed to load AI providers/models from backend:', err);
+            // Fallback to hardcoded models
+            this.providers = [
+                { id: 'openai', name: 'OpenAI' },
+                { id: 'pollinations', name: 'Self AI' }
+            ];
+            this.allModels = [
+                { name: 'GPT-4 Turbo', value: 'gpt-4-turbo', provider: 'openai', icon: '🤖' },
+                { name: 'GPT-3.5 Turbo', value: 'gpt-3.5-turbo', provider: 'openai', icon: '🤖' }
+            ];
+            this.updateModelsForProvider();
+            this.showNotification('Using fallback models - backend failed to load models', 'warning');
+        }
+    }
+
+    setupProviderSwitch() {
+        // Find the provider switch container in the HTML
+        const providerContainer = document.querySelector('.provider-switch');
+        if (!providerContainer) {
+            console.warn('Provider switch container not found in HTML');
+            return;
+        }
+
+        // Create provider switch buttons
+        this.providers.forEach(provider => {
+            const button = document.createElement('button');
+            button.className = `provider-btn ${provider.id === this.selectedProvider ? 'active' : ''}`;
+            button.textContent = provider.name;
+            button.addEventListener('click', () => {
+                this.switchProvider(provider.id);
+            });
+            providerContainer.appendChild(button);
+        });
+    }
+
+    switchProvider(providerId) {
+        if (this.selectedProvider === providerId) return;
+        
+        console.log(`🔄 Switching AI provider from ${this.selectedProvider} to ${providerId}`);
+        
+        // Update selected provider
+        this.selectedProvider = providerId;
+        
+        // Update provider switch UI
+        const providerButtons = document.querySelectorAll('.provider-btn');
+        providerButtons.forEach(btn => {
+            btn.classList.remove('active');
+            if (btn.textContent.toLowerCase().includes(providerId) || 
+                (providerId === 'pollinations' && btn.textContent === 'Self AI')) {
+                btn.classList.add('active');
+            }
+        });
+        
+        // Update available models for the new provider
+        this.updateModelsForProvider();
+        
+        // Update model dropdown
+        this.rebuildModelDropdown();
+        
+        this.showNotification(`Switched to ${this.getProviderDisplayName(providerId)}`, 'success');
+    }
+
+    updateModelsForProvider() {
+        // Filter models based on selected provider
+        this.models = this.allModels.filter(model => model.provider === this.selectedProvider);
+        
+        // Set default model for the provider if current model doesn't belong to this provider
+        const currentModelBelongsToProvider = this.models.some(model => (model.id || model.value) === this.selectedModel);
+        if (!currentModelBelongsToProvider && this.models.length > 0) {
+            // Prefer id (from backend), fallback to value (legacy fallback list)
+            this.selectedModel = this.models[0].id || this.models[0].value;
+            console.log(`🎯 Set default model for ${this.selectedProvider}: ${this.selectedModel}`);
+        }
+        
+        console.log(`📋 Updated models for ${this.selectedProvider}:`, this.models.map(m => m.name));
+    }
+
+    rebuildModelDropdown() {
         const selectContainer = document.getElementById('customSelectItems');
+        if (!selectContainer) return;
+        
+        // Clear existing items
+        selectContainer.innerHTML = '';
+        // Add models for current provider
         this.models.forEach(model => {
             const item = document.createElement('div');
             item.className = 'custom-select-item';
-            item.innerHTML = `<div class="model-icon">${model.icon}</div><span>${model.name}</span>`;
+            item.innerHTML = `<span>${model.name}</span>`;
             item.addEventListener('click', () => {
-                this.selectedModel = model.value;
+                this.selectedModel = model.id || model.value;
                 document.getElementById('selectedModelName').textContent = model.name;
-                document.getElementById('selectedModelIcon').innerHTML = model.icon;
                 selectContainer.style.display = 'none';
                 document.getElementById('customSelect').classList.remove('open');
-                console.log('Model selected:', model.name);
+                console.log('Model selected:', model.name, '(', this.selectedModel, ')');
             });
             selectContainer.appendChild(item);
         });
+        
+        // Update selected model display
+        if (this.models.length > 0) {
+            const selectedModelInfo = this.models.find(m => (m.id || m.value) === this.selectedModel) || this.models[0];
+            document.getElementById('selectedModelName').textContent = selectedModelInfo.name;
+        }
+    }
+
+    getProviderDisplayName(providerId) {
+        const provider = this.providers.find(p => p.id === providerId);
+        return provider ? provider.name : providerId;
+    }
+
+    setupCustomSelect() {
+        const selectContainer = document.getElementById('customSelectItems');
+        if (!selectContainer) {
+            console.warn('Custom select container not found');
+            return;
+        }
+        
+        // Clear existing items first
+        selectContainer.innerHTML = '';
+        
+        // Add models for current provider
+        this.models.forEach(model => {
+            const item = document.createElement('div');
+            item.className = 'custom-select-item';
+            item.innerHTML = `<span>${model.name}</span>`;
+            item.addEventListener('click', () => {
+                this.selectedModel = model.id || model.value;
+                document.getElementById('selectedModelName').textContent = model.name;
+                selectContainer.style.display = 'none';
+                document.getElementById('customSelect').classList.remove('open');
+                console.log('Model selected:', model.name, '(', this.selectedModel, ')');
+            });
+            selectContainer.appendChild(item);
+        });
+        
+        // Update selected model display to show default model
+        if (this.models.length > 0) {
+            const selectedModelInfo = this.models.find(m => (m.id || m.value) === this.selectedModel) || this.models[0];
+            const selectedModelNameEl = document.getElementById('selectedModelName');
+            if (selectedModelNameEl) {
+                selectedModelNameEl.textContent = selectedModelInfo.name;
+            }
+        }
     }
 
     async setupEventListeners() {
@@ -222,6 +367,9 @@ class MockMateController {
         // Custom select dropdown
         customSelect.addEventListener('click', () => {
             const isOpen = customSelect.classList.toggle('open');
+            // Ensure dropdown appears above and is not clipped
+            customSelect.style.position = 'relative';
+            customSelect.style.zIndex = 10000;
             customSelectItems.style.display = isOpen ? 'block' : 'none';
         });
 
@@ -422,6 +570,140 @@ class MockMateController {
         }
     }
 
+    ensureValidModelSelection() {
+        // Ensure selected provider and model are valid based on fetched data
+        const validModels = this.allModels.filter(m => m.provider === this.selectedProvider);
+        if (!validModels.length) {
+            console.warn(`No models available for provider: ${this.selectedProvider}`);
+            return; // nothing to validate
+        }
+
+        const selectedId = this.selectedModel;
+        const isValid = validModels.some(m => (m.id || m.value) === selectedId);
+        if (!isValid) {
+            // Pick first valid model for the current provider
+            const fallback = validModels[0];
+            this.selectedModel = fallback.id || fallback.value;
+            // Reflect in UI if elements exist
+            const nameEl = document.getElementById('selectedModelName');
+            if (nameEl) nameEl.textContent = fallback.name;
+            // Also rebuild dropdown to reflect provider state
+            this.models = validModels;
+            this.rebuildModelDropdown();
+            this.showNotification(`Model not available. Switched to ${fallback.name}`, 'info');
+            console.log('ensureValidModelSelection applied fallback model:', this.selectedModel);
+        }
+    }
+
+    async showResponseWindow() {
+        // Try native window, fallback to in-UI window
+        try {
+            await safeInvoke('show_ai_response_window');
+        } catch (_) {
+            this.ensureUiResponseWindow();
+        }
+    }
+
+    async pollinationsStreamAnswer(prompt, options = {}) {
+        // Build Pollinations URL with streaming
+        const base = 'https://text.pollinations.ai';
+        const params = new URLSearchParams();
+        params.set('prompt', prompt);
+        params.set('model', this.selectedModel); // Use the actual model ID without encoding in URL path
+        if (options.seed !== undefined) params.set('seed', String(options.seed));
+        if (options.temperature !== undefined) params.set('temperature', String(options.temperature));
+        if (options.top_p !== undefined) params.set('top_p', String(options.top_p));
+        if (options.presence_penalty !== undefined) params.set('presence_penalty', String(options.presence_penalty));
+        if (options.frequency_penalty !== undefined) params.set('frequency_penalty', String(options.frequency_penalty));
+        if (options.system) params.set('system', options.system);
+        params.set('stream', 'true');
+        params.set('private', 'true');
+        params.set('referrer', 'mockmate-desktop');
+
+        // Use the correct URL format - model goes in params, not path
+        const url = `${base}/?${params.toString()}`;
+        console.log('Polling Pollinations (stream):', url);
+
+        // Ensure response window visible
+        await this.showResponseWindow();
+        const contentEl = this.ensureUiResponseWindow();
+        contentEl.textContent = '';
+
+        const res = await fetch(url, { method: 'GET' });
+        if (!res.ok || !res.body) {
+            throw new Error(`Pollinations request failed: ${res.status}`);
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let accumulated = '';
+
+        try {
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                const chunk = decoder.decode(value, { stream: true });
+
+                // If the API emits SSE (data: ...), parse it; otherwise treat as plain text
+                if (chunk.includes('data:')) {
+                    const lines = chunk.split('\n');
+                    for (const line of lines) {
+                        const trimmed = line.trim();
+                        if (!trimmed) continue;
+                        if (!trimmed.startsWith('data:')) continue;
+                        const data = trimmed.replace(/^data:\s?/, '');
+                        if (data === '[DONE]') {
+                            console.log('Stream completed with [DONE] marker');
+                            break;
+                        }
+                        try {
+                            const obj = JSON.parse(data);
+                            let textPiece = '';
+                            const choice = obj.choices && obj.choices[0];
+                            if (choice && choice.delta && typeof choice.delta.content === 'string') {
+                                textPiece = choice.delta.content;
+                            } else if (typeof obj.text === 'string') {
+                                textPiece = obj.text;
+                            } else if (typeof obj.content === 'string') {
+                                textPiece = obj.content;
+                            } else if (choice && typeof choice.text === 'string') {
+                                textPiece = choice.text;
+                            }
+                            if (textPiece) {
+                                accumulated += textPiece;
+                                await this.sendToAiWindow('stream', accumulated);
+                            }
+                        } catch {
+                            if (data && data !== 'null') {
+                                accumulated += data;
+                                await this.sendToAiWindow('stream', accumulated);
+                            }
+                        }
+                    }
+                } else {
+                    // Plain text streaming (most likely for Pollinations text endpoint)
+                    accumulated += chunk;
+                    await this.sendToAiWindow('stream', accumulated);
+                }
+            }
+        } catch (streamError) {
+            console.error('Streaming error:', streamError);
+            throw new Error(`Streaming failed: ${streamError.message}`);
+        }
+
+        // Final check: if we have accumulated content, mark as complete
+        if (accumulated.trim()) {
+            console.log('✅ Stream completed successfully, total characters:', accumulated.length);
+            await this.sendToAiWindow('complete', accumulated);
+        } else {
+            console.warn('⚠️ Stream completed but no content accumulated');
+            const fallbackMessage = 'Response received but content was empty. This might be a model compatibility issue.';
+            await this.sendToAiWindow('complete', fallbackMessage);
+        }
+        return accumulated;
+    }
+
     async generateAnswer() {
         try {
             const questionInput = document.getElementById('questionInput');
@@ -435,30 +717,46 @@ class MockMateController {
                 return;
             }
 
+            this.ensureValidModelSelection();
             this.showNotification('Generating AI answer...', 'info');
             
-            // Show the AI response window (it was created at startup)
-            try {
-                await safeInvoke('show_ai_response_window');
-                console.log('AI response window shown successfully');
-            } catch (windowError) {
-                console.error('Failed to show AI response window:', windowError);
-                // Continue with fallback - show in main window or notification
-                this.showNotification('Using fallback display for AI response', 'warning');
-            }
+            // Ensure response window visible regardless of backend
+            await this.showResponseWindow();
             
+            // Build a system prompt to steer interviewer-style answers
+            const systemPrompt = `You are an expert interview assistant. Provide concise, accurate, real-world interview answers. ` +
+                `Use the given company and job description context. Avoid irrelevant details. Use bullet points when helpful.`;
+
             const payload = {
                 question: question,
                 model: this.selectedModel,
+                provider: this.selectedProvider,
                 company: companyInput.value.trim() || null,
                 position: null,
                 job_description: jobDescriptionInput.value.trim() || null
             };
+            if (this.selectedProvider === 'pollinations') {
+                // Use backend streaming for better UX (recommended for Pollinations)
+                try {
+                    console.log('🚀 Starting Pollinations streaming response...');
+                    // Reset streaming state for new request
+                    this.streamingText = '';
+                    this.isStreaming = true;
+                    
+                    const answer = await safeInvoke('pollinations_generate_answer_streaming', { payload: payload });
+                    console.log('✅ Pollinations streaming completed with final answer:', answer);
+                    // Mark as complete with the final answer
+                    await this.sendToAiWindow('complete', answer);
+                } catch (streamError) {
+                    console.warn('⚠️ Streaming failed, falling back to non-streaming:', streamError);
+                    const answer = await safeInvoke('pollinations_generate_answer', { payload: payload });
+                    await this.sendToAiWindow('complete', answer);
+                }
+            } else {
+                const answer = await safeInvoke('generate_ai_answer', payload);
+                await this.sendToAiWindow('complete', answer);
+            }
 
-            const answer = await safeInvoke('generate_ai_answer', { payload });
-            
-            // Send the answer to the AI response window using streaming
-            await this.sendToAiWindow('stream', answer);
             this.showNotification('Answer generated successfully', 'success');
             
         } catch (error) {
@@ -510,19 +808,46 @@ class MockMateController {
                 return;
             }
 
-            // For now, just generate an answer for the manual question
+            // Validate selection before sending
+            this.ensureValidModelSelection();
+            // Ensure response window visible
+            await this.showResponseWindow();
+
+            // Build system prompt
+            const systemPrompt = `You are an expert interview assistant. Provide concise, accurate answers. Avoid irrelevant details.`;
+
+            this.showNotification('Processing your question...', 'info');
+
             const payload = {
                 question: question,
                 model: this.selectedModel,
+                provider: this.selectedProvider,
                 company: document.getElementById('companyInput').value.trim() || null,
                 position: null,
                 job_description: document.getElementById('jobDescriptionInput').value.trim() || null
             };
-
-            this.showNotification('Processing your question...', 'info');
-            const answer = await safeInvoke('generate_ai_answer', { payload });
+            if (this.selectedProvider === 'pollinations') {
+                // Use backend streaming for better UX (recommended for Pollinations)
+                try {
+                    console.log('🚀 Starting Pollinations streaming for manual question...');
+                    // Reset streaming state for new request
+                    this.streamingText = '';
+                    this.isStreaming = true;
+                    
+                    const answer = await safeInvoke('pollinations_generate_answer_streaming', { payload: payload });
+                    console.log('✅ Pollinations manual question streaming completed with final answer:', answer);
+                    // Mark as complete with the final answer
+                    await this.sendToAiWindow('complete', answer);
+                } catch (streamError) {
+                    console.warn('⚠️ Manual question streaming failed, falling back to non-streaming:', streamError);
+                    const answer = await safeInvoke('pollinations_generate_answer', { payload: payload });
+                    await this.sendToAiWindow('complete', answer);
+                }
+            } else {
+                const answer = await safeInvoke('generate_ai_answer', payload);
+                await this.sendToAiWindow('complete', answer);
+            }
             
-            this.displayAnswer(answer);
             questionInput.value = '';
             this.showNotification('Answer generated for your question', 'success');
             
@@ -638,13 +963,10 @@ class MockMateController {
         }
     }
 
+    // Deprecated: Avoid using transcription area to show AI answers
     displayAnswer(answer) {
-        // For now, we'll show the answer in the transcription area
-        // In a full implementation, this might open a modal or separate panel
-        const transcriptionEl = document.getElementById('transcriptionText');
-        transcriptionEl.innerHTML = `<strong>AI Answer:</strong><br>${answer}`;
-        transcriptionEl.classList.add('active');
-        transcriptionEl.classList.remove('listening');
+        const contentEl = this.ensureUiResponseWindow();
+        contentEl.textContent = answer;
     }
 
     handleWebSocketMessage(message) {
@@ -667,13 +989,18 @@ class MockMateController {
         
         this.aiResponseWindow = document.createElement('div');
         this.aiResponseWindow.className = 'ai-response-window';
+        // Get screen dimensions for dynamic sizing
+        const screenHeight = window.screen.availHeight || window.screen.height || 1080;
+        const maxWindowHeight = Math.floor(screenHeight * 0.8); // Use 80% of screen height
+        
         this.aiResponseWindow.style.cssText = `
             position: absolute;
             top: ${mainWindowRect.bottom + 5}px;
             left: ${mainWindowRect.left}px;
             width: ${mainWindowRect.width}px;
+            height: 150px;
             min-height: 100px;
-            max-height: 400px;
+            max-height: ${maxWindowHeight}px;
             background: rgba(0, 0, 0, 0.85);
             border-radius: 16px;
             border: 1px solid rgba(255, 255, 255, 0.1);
@@ -684,6 +1011,7 @@ class MockMateController {
             display: flex;
             flex-direction: column;
             animation: slideInFromBottom 0.3s ease;
+            box-sizing: border-box;
         `;
         
         const header = document.createElement('div');
@@ -723,6 +1051,15 @@ class MockMateController {
         `;
         closeBtn.innerHTML = '<span class="material-icons" style="font-size: 18px;">close</span>';
         closeBtn.onclick = () => {
+            // Disconnect observers and timers
+            if (this.aiWindowResizeObserver) {
+                try { this.aiWindowResizeObserver.disconnect(); } catch {}
+                this.aiWindowResizeObserver = null;
+            }
+            if (this.aiWindowSizePoll) {
+                clearInterval(this.aiWindowSizePoll);
+                this.aiWindowSizePoll = null;
+            }
             this.aiResponseWindow.remove();
             this.aiResponseWindow = null;
         };
@@ -741,12 +1078,41 @@ class MockMateController {
             font-size: 14px;
             overflow-y: auto;
             flex: 1;
-            max-height: 320px;
+            max-height: none; // Will be set dynamically
         `;
         
         this.aiResponseWindow.appendChild(header);
         this.aiResponseWindow.appendChild(content);
         document.body.appendChild(this.aiResponseWindow);
+        
+        // Attach ResizeObserver to auto-adjust height on content changes
+        try {
+            if (this.aiWindowResizeObserver) {
+                try { this.aiWindowResizeObserver.disconnect(); } catch {}
+                this.aiWindowResizeObserver = null;
+            }
+            if ('ResizeObserver' in window) {
+                this.aiWindowResizeObserver = new ResizeObserver(() => {
+                    this.throttledAdjustHeight();
+                });
+                this.aiWindowResizeObserver.observe(content);
+            } else {
+                // Fallback polling every 200ms if ResizeObserver is unavailable
+                let lastHeight = content.scrollHeight;
+                if (this.aiWindowSizePoll) {
+                    clearInterval(this.aiWindowSizePoll);
+                }
+                this.aiWindowSizePoll = setInterval(() => {
+                    const h = content.scrollHeight;
+                    if (h !== lastHeight) {
+                        lastHeight = h;
+                        this.throttledAdjustHeight();
+                    }
+                }, 200);
+            }
+        } catch (e) {
+            console.warn('Failed to setup ResizeObserver for AI window:', e);
+        }
         
         return content;
     }
@@ -796,45 +1162,117 @@ class MockMateController {
     }
     
     // Adjust AI window height based on content
+    // NOTE: Disabled for Tauri windows - the separate ai-response.html handles window resizing
     adjustAiWindowHeight() {
         if (!this.aiResponseWindow) return;
         
         const content = this.aiResponseWindow.querySelector('.ai-response-content');
-        const contentHeight = content.scrollHeight;
-        const maxHeight = 400;
-        const minHeight = 100;
+        if (!content) return;
         
-        const newHeight = Math.min(Math.max(contentHeight + 80, minHeight), maxHeight); // +80 for header
-        this.aiResponseWindow.style.height = newHeight + 'px';
+        // For in-UI response windows (overlay mode), just log the content size
+        // The Tauri window handles its own resizing via ai-response.html
+        console.log('📊 Content updated (Tauri window handles resizing):', {
+            textLength: content.textContent ? content.textContent.length : 0,
+            scrollHeight: content.scrollHeight,
+            offsetHeight: content.offsetHeight
+        });
+        
+        // Only do basic layout adjustments for in-UI windows
+        content.style.height = 'auto';
+        content.style.maxHeight = 'none';
     }
     
+    // Throttled version of height adjustment for streaming content
+    throttledAdjustHeight() {
+        // Clear any existing timeout
+        if (this.heightAdjustmentTimeout) {
+            clearTimeout(this.heightAdjustmentTimeout);
+        }
+        
+        // Set a new timeout to throttle the height adjustments
+        this.heightAdjustmentTimeout = setTimeout(() => {
+            this.adjustAiWindowHeight();
+            this.heightAdjustmentTimeout = null;
+        }, 150); // Throttle to every 150ms during streaming
+    }
+    
+    // Ensure an in-UI AI response window exists (fallback when native window not available)
+    ensureUiResponseWindow() {
+        if (!this.aiResponseWindow) {
+            this.createAiResponseWindow();
+        }
+        return this.aiResponseWindow.querySelector('.ai-response-content');
+    }
+
     // Send data to AI response window (for Tauri-based window communication)
     async sendToAiWindow(type, data) {
+        // Handle streaming state management
+        if (type === 'stream') {
+            if (!this.isStreaming) {
+                // Start of a new stream - reset accumulator
+                this.streamingText = '';
+                this.isStreaming = true;
+                console.log('🚀 Starting new streaming session');
+            }
+            
+            // For streaming, data should be the new token/chunk to add
+            const newToken = typeof data === 'string' ? data : data?.text || '';
+            if (newToken) {
+                // Only add the new token, not replace entire text
+                this.streamingText += newToken;
+                console.log(`📝 Added token: "${newToken}" | Total length: ${this.streamingText.length}`);
+            }
+        } else if (type === 'complete') {
+            // Stream is complete
+            this.isStreaming = false;
+            const finalText = typeof data === 'string' ? data : data?.text || this.streamingText;
+            this.streamingText = finalText;
+            console.log('✅ Stream completed, final text length:', finalText.length);
+        } else if (type === 'error') {
+            // Error occurred - reset streaming state
+            this.isStreaming = false;
+            this.streamingText = '';
+        }
+
+        // Always mirror into the in-UI response window so users can see content immediately
+        const mirrorToUi = () => {
+            const contentEl = this.ensureUiResponseWindow();
+            if (type === 'stream') {
+                // Show accumulated streaming text with cursor
+                contentEl.innerHTML = this.streamingText + '<span class="cursor">|</span>';
+                // Adjust window height for streaming content (throttled)
+                this.throttledAdjustHeight();
+            } else if (type === 'complete') {
+                // Show final text without cursor
+                const finalText = typeof data === 'string' ? data : data?.text || this.streamingText;
+                contentEl.textContent = finalText;
+                // Adjust window height for final content (immediate)
+                this.adjustAiWindowHeight();
+            } else if (type === 'error') {
+                const errorMsg = typeof data === 'string' ? data : data?.error || 'Unknown error';
+                contentEl.textContent = `Error: ${errorMsg}`;
+                // Adjust window height for error content (immediate)
+                this.adjustAiWindowHeight();
+            }
+        };
+
         try {
             // Use the new Tauri command to send data to AI response window
             const aiResponseData = {
                 message_type: type,
-                text: typeof data === 'string' ? data : data?.text || null,
+                text: type === 'stream' ? this.streamingText : (typeof data === 'string' ? data : data?.text || null),
                 error: typeof data === 'string' && type === 'error' ? data : data?.error || null
             };
             
-            console.log('Sending to AI window:', aiResponseData);
+            console.log(`Sending to AI window (${type}):`, aiResponseData.text ? `"${aiResponseData.text.substring(0, 100)}..."` : aiResponseData);
             
             await safeInvoke('send_ai_response_data', { data: aiResponseData });
-            console.log('Successfully sent data to AI response window');
-            
+
+            // Mirror to UI as well for visibility
+            mirrorToUi();
         } catch (error) {
-            console.error('Failed to send data to AI window:', error);
-            // Fallback: display in main window
-            if (type === 'stream' || type === 'complete') {
-                const text = typeof data === 'string' ? data : data?.text;
-                if (text) {
-                    this.displayAnswer(text);
-                }
-            } else if (type === 'error') {
-                const errorMsg = typeof data === 'string' ? data : data?.error || 'Unknown error';
-                this.showNotification(`AI Error: ${errorMsg}`, 'error');
-            }
+            console.warn('Falling back to in-UI response window:', error);
+            mirrorToUi();
         }
     }
 
@@ -983,10 +1421,11 @@ function showInitializationState(state) {
         case 'ready':
             transcriptionEl.textContent = 'Enable Mic or System Sound to start transcription...';
             transcriptionEl.className = 'transcription-text';
-            statusPill.textContent = 'Live';
-            statusPill.style.background = 'rgba(0, 200, 150, 0.15)';
-            statusPill.style.color = 'var(--success)';
-            statusPill.style.borderColor = 'rgba(0, 200, 150, 0.2)';
+            // Hide the status pill to remove the "Live" label from header
+            if (statusPill) {
+                statusPill.textContent = '';
+                statusPill.style.display = 'none';
+            }
             break;
             
         case 'error':

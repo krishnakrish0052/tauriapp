@@ -12,10 +12,12 @@ pub mod audio;
 mod websocket;
 mod deepgram;
 mod openai;
+mod pollinations;
 mod wasapi_loopback;
 pub mod realtime_transcription;
 
 use openai::{OpenAIClient, InterviewContext};
+use pollinations::{PollinationsClient, AIProvider};
 
 pub fn run() -> Result<()> {
     // Load environment variables from .env file
@@ -58,8 +60,13 @@ pub fn run() -> Result<()> {
             generate_ai_answer,
             analyze_screen_content,
             update_interview_context,
+            get_available_models,
+            get_ai_providers,
             save_microphone_file,
-            save_system_audio_file
+            save_system_audio_file,
+            pollinations_generate_answer,
+            pollinations_generate_answer_streaming,
+            pollinations_generate_answer_post_streaming
         ])
         .manage(AppState::new())
         .setup(|app| {
@@ -120,6 +127,7 @@ struct QuestionPayload {
 struct GenerateAnswerPayload {
     question: String,
     model: String,
+    provider: String, // "openai" or "pollinations"
     company: Option<String>,
     position: Option<String>,
     job_description: Option<String>,
@@ -152,6 +160,7 @@ struct AudioConfigPayload {
 #[derive(Default)]
 struct AppState {
     openai_client: Arc<Mutex<Option<OpenAIClient>>>,
+    pollinations_client: Arc<Mutex<Option<PollinationsClient>>>,
     interview_context: Arc<Mutex<InterviewContext>>,
 }
 
@@ -166,6 +175,18 @@ impl AppState {
             let api_key = std::env::var("OPENAI_API_KEY")
                 .map_err(|_| "OPENAI_API_KEY environment variable not set".to_string())?;
             *client_guard = Some(OpenAIClient::new(api_key));
+        }
+        Ok(())
+    }
+    
+    fn ensure_pollinations_client(&self) -> Result<(), String> {
+        let mut client_guard = self.pollinations_client.lock();
+        if client_guard.is_none() {
+            let api_key = std::env::var("POLLINATIONS_API_KEY")
+                .map_err(|_| "POLLINATIONS_API_KEY environment variable not set".to_string())?;
+            let referer = std::env::var("POLLINATIONS_REFERER")
+                .unwrap_or_else(|_| "mockmate".to_string());
+            *client_guard = Some(PollinationsClient::new(api_key, referer));
         }
         Ok(())
     }
@@ -236,12 +257,9 @@ async fn generate_ai_answer(
 ) -> Result<String, String> {
     info!("Generating AI answer for question: {}", payload.question);
     
-    state.ensure_openai_client()?;
-    
-    let client = {
-        let client_guard = state.openai_client.lock();
-        client_guard.as_ref().unwrap().clone()
-    };
+    // Determine which provider to use
+    let provider = AIProvider::from_str(&payload.provider)
+        .unwrap_or(AIProvider::OpenAI); // Default to OpenAI if invalid
     
     let mut context = {
         let context_guard = state.interview_context.lock();
@@ -259,14 +277,235 @@ async fn generate_ai_answer(
         context.job_description = Some(job_description);
     }
     
-    let model = openai::OpenAIModel::from_string(&payload.model)
-        .map_err(|e| format!("Invalid model: {}", e))?;
-    
-    let answer = client.generate_answer(&payload.question, &context, model)
+    match provider {
+        AIProvider::OpenAI => {
+            info!("Using OpenAI provider");
+            state.ensure_openai_client()?;
+            
+            let client = {
+                let client_guard = state.openai_client.lock();
+                client_guard.as_ref().unwrap().clone()
+            };
+            
+            let model = openai::OpenAIModel::from_string(&payload.model)
+                .map_err(|e| format!("Invalid OpenAI model: {}", e))?;
+            
+            client.generate_answer(&payload.question, &context, model)
+                .await
+                .map_err(|e| e.to_string())
+        },
+        AIProvider::Pollinations => {
+            info!("Using Pollinations provider");
+            state.ensure_pollinations_client()?;
+            
+            let client = {
+                let client_guard = state.pollinations_client.lock();
+                client_guard.as_ref().unwrap().clone()
+            };
+            
+            let model = pollinations::PollinationsModel::from_string(&payload.model)
+                .map_err(|e| format!("Invalid Pollinations model: {}", e))?;
+            
+            client.generate_answer(&payload.question, &context, model)
+                .await
+                .map_err(|e| e.to_string())
+        }
+    }
+}
+
+// New command: generate answer via Pollinations using backend (adds required headers)
+#[tauri::command]
+async fn pollinations_generate_answer(
+    payload: GenerateAnswerPayload,
+    state: State<'_, AppState>
+) -> Result<String, String> {
+    if payload.provider.to_lowercase() != "pollinations" {
+        return Err("Provider must be 'pollinations' for this command".to_string());
+    }
+    info!("Generating Pollinations answer (backend) for: {}", payload.question);
+    state.ensure_pollinations_client()?;
+
+    let client = {
+        let client_guard = state.pollinations_client.lock();
+        client_guard.as_ref().unwrap().clone()
+    };
+
+    let mut context = {
+        let context_guard = state.interview_context.lock();
+        context_guard.clone()
+    };
+    if let Some(company) = payload.company { context.company = Some(company); }
+    if let Some(position) = payload.position { context.position = Some(position); }
+    if let Some(job_description) = payload.job_description { context.job_description = Some(job_description); }
+
+    let model = pollinations::PollinationsModel::from_string(&payload.model)
+        .map_err(|e| format!("Invalid Pollinations model: {}", e))?;
+
+    client.generate_answer(&payload.question, &context, model)
         .await
-        .map_err(|e| e.to_string())?;
-    
-    Ok(answer)
+        .map_err(|e| e.to_string())
+}
+
+// New command: Generate streaming answer via Pollinations GET endpoint
+#[tauri::command]
+async fn pollinations_generate_answer_streaming(
+    payload: GenerateAnswerPayload,
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+) -> Result<String, String> {
+    if payload.provider.to_lowercase() != "pollinations" {
+        return Err("Provider must be 'pollinations' for this command".to_string());
+    }
+    info!("Generating Pollinations streaming answer (GET) for: {}", payload.question);
+    state.ensure_pollinations_client()?;
+
+    let client = {
+        let client_guard = state.pollinations_client.lock();
+        client_guard.as_ref().unwrap().clone()
+    };
+
+    let mut context = {
+        let context_guard = state.interview_context.lock();
+        context_guard.clone()
+    };
+    if let Some(company) = payload.company { context.company = Some(company); }
+    if let Some(position) = payload.position { context.position = Some(position); }
+    if let Some(job_description) = payload.job_description { context.job_description = Some(job_description); }
+
+    let model = pollinations::PollinationsModel::from_string(&payload.model)
+        .map_err(|e| format!("Invalid Pollinations model: {}", e))?;
+
+    // Show the AI response window before starting streaming
+    if let Err(e) = show_ai_response_window(app_handle.clone()) {
+        warn!("Failed to show AI response window: {}", e);
+    }
+
+    // Stream the response with callback to update UI
+    let app_handle_clone = app_handle.clone();
+    let result = client.generate_answer_streaming(
+        &payload.question, 
+        &context, 
+        model,
+        move |token: &str| {
+            // Send streaming token to the AI response window
+            let data = AiResponseData {
+                message_type: "stream".to_string(),
+                text: Some(token.to_string()),
+                error: None,
+            };
+            if let Err(e) = send_ai_response_data(app_handle_clone.clone(), data) {
+                error!("Failed to send streaming token to UI: {}", e);
+            }
+        }
+    ).await;
+
+    match result {
+        Ok(full_response) => {
+            // Send completion signal
+            let data = AiResponseData {
+                message_type: "complete".to_string(),
+                text: Some(full_response.clone()),
+                error: None,
+            };
+            if let Err(e) = send_ai_response_data(app_handle, data) {
+                error!("Failed to send completion signal to UI: {}", e);
+            }
+            Ok(full_response)
+        },
+        Err(e) => {
+            // Send error signal
+            let data = AiResponseData {
+                message_type: "error".to_string(),
+                text: None,
+                error: Some(e.to_string()),
+            };
+            if let Err(send_err) = send_ai_response_data(app_handle, data) {
+                error!("Failed to send error signal to UI: {}", send_err);
+            }
+            Err(e.to_string())
+        }
+    }
+}
+
+// New command: Generate streaming answer via Pollinations POST endpoint
+#[tauri::command]
+async fn pollinations_generate_answer_post_streaming(
+    payload: GenerateAnswerPayload,
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+) -> Result<String, String> {
+    if payload.provider.to_lowercase() != "pollinations" {
+        return Err("Provider must be 'pollinations' for this command".to_string());
+    }
+    info!("Generating Pollinations streaming answer (POST) for: {}", payload.question);
+    state.ensure_pollinations_client()?;
+
+    let client = {
+        let client_guard = state.pollinations_client.lock();
+        client_guard.as_ref().unwrap().clone()
+    };
+
+    let mut context = {
+        let context_guard = state.interview_context.lock();
+        context_guard.clone()
+    };
+    if let Some(company) = payload.company { context.company = Some(company); }
+    if let Some(position) = payload.position { context.position = Some(position); }
+    if let Some(job_description) = payload.job_description { context.job_description = Some(job_description); }
+
+    let model = pollinations::PollinationsModel::from_string(&payload.model)
+        .map_err(|e| format!("Invalid Pollinations model: {}", e))?;
+
+    // Show the AI response window before starting streaming
+    if let Err(e) = show_ai_response_window(app_handle.clone()) {
+        warn!("Failed to show AI response window: {}", e);
+    }
+
+    // Stream the response with callback to update UI
+    let app_handle_clone = app_handle.clone();
+    let result = client.generate_answer_post_streaming(
+        &payload.question, 
+        &context, 
+        model,
+        move |token: &str| {
+            // Send streaming token to the AI response window
+            let data = AiResponseData {
+                message_type: "stream".to_string(),
+                text: Some(token.to_string()),
+                error: None,
+            };
+            if let Err(e) = send_ai_response_data(app_handle_clone.clone(), data) {
+                error!("Failed to send streaming token to UI: {}", e);
+            }
+        }
+    ).await;
+
+    match result {
+        Ok(full_response) => {
+            // Send completion signal
+            let data = AiResponseData {
+                message_type: "complete".to_string(),
+                text: Some(full_response.clone()),
+                error: None,
+            };
+            if let Err(e) = send_ai_response_data(app_handle, data) {
+                error!("Failed to send completion signal to UI: {}", e);
+            }
+            Ok(full_response)
+        },
+        Err(e) => {
+            // Send error signal
+            let data = AiResponseData {
+                message_type: "error".to_string(),
+                text: None,
+                error: Some(e.to_string()),
+            };
+            if let Err(send_err) = send_ai_response_data(app_handle, data) {
+                error!("Failed to send error signal to UI: {}", send_err);
+            }
+            Err(e.to_string())
+        }
+    }
 }
 
 #[tauri::command]
@@ -329,6 +568,89 @@ fn update_interview_context(
     }
     
     Ok("Interview context updated".to_string())
+}
+
+#[derive(Serialize, Deserialize)]
+struct ModelInfo {
+    id: String,
+    name: String,
+    provider: String,
+    icon: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ProviderInfo {
+    id: String,
+    name: String,
+    description: String,
+}
+
+#[tauri::command]
+async fn get_available_models(state: State<'_, AppState>) -> Result<Vec<ModelInfo>, String> {
+    info!("Getting available models...");
+    
+    let mut models = Vec::new();
+    
+    // OpenAI models
+    models.push(ModelInfo {
+        id: "gpt-4-turbo".to_string(),
+        name: "GPT-4 Turbo".to_string(),
+        provider: "openai".to_string(),
+        icon: "🤖".to_string(),
+    });
+    models.push(ModelInfo {
+        id: "gpt-4".to_string(),
+        name: "GPT-4".to_string(),
+        provider: "openai".to_string(),
+        icon: "🤖".to_string(),
+    });
+    models.push(ModelInfo {
+        id: "gpt-3.5-turbo".to_string(),
+        name: "GPT-3.5 Turbo".to_string(),
+        provider: "openai".to_string(),
+        icon: "🤖".to_string(),
+    });
+    
+    // Pollinations models (fetched from API with headers)
+    if let Err(e) = state.ensure_pollinations_client() {
+        warn!("Pollinations client not available: {}", e);
+    } else {
+        let client = {
+            let guard = state.pollinations_client.lock();
+            guard.as_ref().unwrap().clone()
+        };
+        let pollinations_models = client.fetch_available_models().await.unwrap_or_default();
+        for model in pollinations_models {
+            models.push(ModelInfo {
+                id: model.as_str().to_string(),
+                name: model.display_name().to_string(),
+                provider: "pollinations".to_string(),
+                icon: "🧠".to_string(),
+            });
+        }
+    }
+    
+    Ok(models)
+}
+
+#[tauri::command]
+fn get_ai_providers() -> Result<Vec<ProviderInfo>, String> {
+    info!("Getting AI providers...");
+    
+    let providers = vec![
+        ProviderInfo {
+            id: "openai".to_string(),
+            name: "OpenAI".to_string(),
+            description: "Official OpenAI models including GPT-4 and GPT-3.5".to_string(),
+        },
+        ProviderInfo {
+            id: "pollinations".to_string(),
+            name: "Pollinations (Self AI)".to_string(),
+            description: "Free and open AI models via Pollinations API".to_string(),
+        },
+    ];
+    
+    Ok(providers)
 }
 
 // New Audio Commands
@@ -564,6 +886,16 @@ fn create_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
     let response_x = main_position.x;
     let response_y = main_position.y + main_size.height as i32 + 5; // 5px gap
     
+    // Get screen dimensions to set proper max height
+    let screen_size = main_window.current_monitor().map_err(|e| e.to_string())?
+        .map(|monitor| {
+            let size = monitor.size();
+            (size.width, size.height)
+        })
+        .unwrap_or((1920, 1080)); // fallback to common resolution
+    
+    let max_window_height = (screen_size.1 as f64 * 0.8) as f64; // Use 80% of screen height
+    
     // Create response window configuration
     let window_config = tauri::WebviewWindowBuilder::new(
         &app_handle,
@@ -571,9 +903,9 @@ fn create_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
         tauri::WebviewUrl::App("ai-response.html".into())
     )
     .title("AI Response")
-    .inner_size(1150.0, 150.0) // Start with minimal height
-    .min_inner_size(1150.0, 100.0)
-    .max_inner_size(1150.0, 500.0)
+    .inner_size(1150.0, 100.0) // Start with minimal height for auto-sizing
+    .min_inner_size(1150.0, 80.0)  // Lower minimum for auto-sizing
+    .max_inner_size(1150.0, max_window_height)
     .position(response_x as f64, response_y as f64)
     .resizable(false)
     .fullscreen(false)
@@ -626,26 +958,46 @@ fn close_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 fn resize_ai_response_window(app_handle: AppHandle, height: u32) -> Result<String, String> {
-    info!("Resizing AI response window to height: {}", height);
+    info!("Auto-resizing AI response window to height: {}", height);
     
     if let Some(window) = app_handle.get_webview_window("ai-response") {
-        let clamped_height = height.max(100).min(500); // Clamp between 100 and 500
+        // Get screen dimensions for dynamic max height
+        let max_height = window.current_monitor()
+            .map_err(|e| e.to_string())?
+            .map(|monitor| {
+                let size = monitor.size();
+                (size.height as f64 * 0.85) as u32 // Use 85% of screen height
+            })
+            .unwrap_or(918); // fallback to 85% of 1080p
         
-        match window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
-            width: 1150,
-            height: clamped_height,
-        })) {
-            Ok(_) => {
-                info!("AI response window resized successfully to height: {}", clamped_height);
-                Ok(format!("Window resized to height: {}", clamped_height))
+        // Lower minimum height for auto-sizing content
+        let clamped_height = height.max(80).min(max_height); // Clamp between 80 and screen height
+        
+        // Get current size to check if resize is needed
+        let current_size = window.outer_size().map_err(|e| e.to_string())?;
+        let size_diff = (current_size.height as i32 - clamped_height as i32).abs();
+        
+        // More sensitive resize threshold for auto-height (more than 5px)
+        if size_diff > 5 {
+            match window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+                width: 1150,
+                height: clamped_height,
+            })) {
+                Ok(_) => {
+                    info!("AI response window auto-resized: {}px -> {}px (diff: {}px)", current_size.height, clamped_height, size_diff);
+                    Ok(format!("Auto-resized: {} -> {}", current_size.height, clamped_height))
+                }
+                Err(e) => {
+                    error!("Failed to auto-resize AI response window: {}", e);
+                    Err(format!("Auto-resize failed: {}", e))
+                }
             }
-            Err(e) => {
-                error!("Failed to resize AI response window: {}", e);
-                Err(format!("Failed to resize window: {}", e))
-            }
+        } else {
+            info!("No auto-resize needed: current={}px, requested={}px (diff: {}px)", current_size.height, clamped_height, size_diff);
+            Ok(format!("No resize needed: {}", current_size.height))
         }
     } else {
-        warn!("AI response window not found for resize");
+        warn!("AI response window not found for auto-resize");
         Err("AI response window not found".to_string())
     }
 }
@@ -670,6 +1022,16 @@ fn create_ai_response_window_at_startup(app_handle: AppHandle) -> Result<String,
     let response_x = main_position.x;
     let response_y = main_position.y + main_size.height as i32 + 5; // 5px gap
     
+    // Get screen dimensions to set proper max height
+    let screen_size = main_window.current_monitor().map_err(|e| e.to_string())?
+        .map(|monitor| {
+            let size = monitor.size();
+            (size.width, size.height)
+        })
+        .unwrap_or((1920, 1080)); // fallback to common resolution
+    
+    let max_window_height = (screen_size.1 as f64 * 0.8) as f64; // Use 80% of screen height
+    
     // Create response window configuration (hidden by default)
     let window_config = tauri::WebviewWindowBuilder::new(
         &app_handle,
@@ -677,9 +1039,9 @@ fn create_ai_response_window_at_startup(app_handle: AppHandle) -> Result<String,
         tauri::WebviewUrl::App("ai-response.html".into())
     )
     .title("AI Response")
-    .inner_size(1150.0, 150.0) // Start with minimal height
-    .min_inner_size(1150.0, 100.0)
-    .max_inner_size(1150.0, 500.0)
+    .inner_size(1150.0, 100.0) // Start with minimal height for auto-sizing
+    .min_inner_size(1150.0, 80.0)  // Lower minimum for auto-sizing
+    .max_inner_size(1150.0, max_window_height)
     .position(response_x as f64, response_y as f64)
     .resizable(false)
     .fullscreen(false)

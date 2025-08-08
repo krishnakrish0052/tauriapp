@@ -46,6 +46,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
 url = "2.4"
+urlencoding = "2.1"
 
 [dependencies.windows-sys]
 version = "0.52.0"
