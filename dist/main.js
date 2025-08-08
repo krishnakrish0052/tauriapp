@@ -717,6 +717,12 @@ class MockMateController {
                 return;
             }
 
+            // Clear the transcription immediately when Generate button is clicked
+            // This prevents sending the same text again on next Generate button click
+            if (this.fullTranscription) {
+                this.clearTranscription();
+            }
+
             this.ensureValidModelSelection();
             this.showNotification('Generating AI answer...', 'info');
             
@@ -733,8 +739,12 @@ class MockMateController {
                 provider: this.selectedProvider,
                 company: companyInput.value.trim() || null,
                 position: null,
-                job_description: jobDescriptionInput.value.trim() || null
+                job_description: jobDescriptionInput.value.trim() || null,
+                system_prompt: systemPrompt
             };
+            
+            // Log the payload being sent to AI
+            console.log('🚀 AI Request Payload:', JSON.stringify(payload, null, 2));
             if (this.selectedProvider === 'pollinations') {
                 // Use backend streaming for better UX (recommended for Pollinations)
                 try {
@@ -824,8 +834,12 @@ class MockMateController {
                 provider: this.selectedProvider,
                 company: document.getElementById('companyInput').value.trim() || null,
                 position: null,
-                job_description: document.getElementById('jobDescriptionInput').value.trim() || null
+                job_description: document.getElementById('jobDescriptionInput').value.trim() || null,
+                system_prompt: systemPrompt
             };
+            
+            // Log the payload being sent to AI for manual question
+            console.log('💬 Manual Question AI Request Payload:', JSON.stringify(payload, null, 2));
             if (this.selectedProvider === 'pollinations') {
                 // Use backend streaming for better UX (recommended for Pollinations)
                 try {
@@ -1050,7 +1064,15 @@ class MockMateController {
             transition: all 0.2s ease;
         `;
         closeBtn.innerHTML = '<span class="material-icons" style="font-size: 18px;">close</span>';
-        closeBtn.onclick = () => {
+        closeBtn.onclick = async () => {
+            try {
+                // Try to close the native Tauri window first
+                await safeInvoke('close_ai_response_window');
+            } catch (error) {
+                console.log('Native window close failed, closing in-UI window:', error);
+            }
+            
+            // Always clean up the in-UI window as well
             // Disconnect observers and timers
             if (this.aiWindowResizeObserver) {
                 try { this.aiWindowResizeObserver.disconnect(); } catch {}
