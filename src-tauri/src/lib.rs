@@ -955,7 +955,7 @@ fn create_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
         })
         .unwrap_or((1920, 1080)); // fallback to common resolution
     
-    let _max_window_height = (screen_size.1 as f64 * 0.8) as f64; // Use 80% of screen height
+    let _max_window_height = (screen_size.1 as f64 * 0.6) as f64; // Use 60% of screen height
     
     // Create response window configuration
     let window_config = tauri::WebviewWindowBuilder::new(
@@ -1029,25 +1029,26 @@ fn resize_ai_response_window(app_handle: AppHandle, height: u32) -> Result<Strin
         })?;
         
         // Get screen dimensions for dynamic max height
-        let max_height = window.current_monitor()
+        let monitor = window.current_monitor()
             .map_err(|e| {
                 error!("❌ Failed to get monitor info: {}", e);
                 e.to_string()
             })?
-            .map(|monitor| {
-                let size = monitor.size();
-                let calculated_max = (size.height as f64 * 0.85) as u32;
-                info!("📐 Screen size: {}x{}, calculated max height: {}", size.width, size.height, calculated_max);
-                calculated_max
-            })
-            .unwrap_or(918); // fallback to 85% of 1080p
+            .ok_or_else(|| {
+                error!("❌ No monitor found");
+                "No monitor found".to_string()
+            })?;
+        
+        let max_height = monitor.size();
+        let calculated_max = (max_height.height as f64 * 0.6) as u32;
+        info!("📐 Screen size: {}x{}, calculated max height: {}", max_height.width, max_height.height, calculated_max);
         
         // Lower minimum height for auto-sizing content
-        let clamped_height = height.max(80).min(max_height);
+        let clamped_height = height.max(80).min(calculated_max);
         let size_diff = (current_size.height as i32 - clamped_height as i32).abs();
         
         info!("📊 RESIZE DEBUG: current={}px, requested={}px, clamped={}px, max={}px, diff={}px", 
-              current_size.height, height, clamped_height, max_height, size_diff);
+              current_size.height, height, clamped_height, calculated_max, size_diff);
         
         // Always try to resize if there's any difference - remove the 5px threshold
         if current_size.height != clamped_height {
@@ -1120,7 +1121,7 @@ fn create_ai_response_window_at_startup(app_handle: AppHandle) -> Result<String,
         })
         .unwrap_or((1920, 1080)); // fallback to common resolution
     
-    let _max_window_height = (screen_size.1 as f64 * 0.8) as f64; // Use 80% of screen height
+    let _max_window_height = (screen_size.1 as f64 * 0.6) as f64; // Use 60% of screen height
     
     // Create response window configuration (hidden by default)
     let window_config = tauri::WebviewWindowBuilder::new(

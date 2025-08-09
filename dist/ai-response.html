@@ -615,8 +615,16 @@ git shortlog -sn --since="1 month ago"
                 contentArea.textContent = incomingText || 'No text provided';
             }
             
-            // Adjust height after content update
-            setTimeout(() => adjustWindowHeight(), 50);
+            // Adjust height after content update - be more aggressive during streaming
+            if (streamingActive) {
+                // During streaming, force multiple height checks to ensure accuracy
+                setTimeout(() => adjustWindowHeight(), 10);
+                setTimeout(() => adjustWindowHeight(), 50);
+                setTimeout(() => adjustWindowHeight(), 100);
+            } else {
+                // When complete, just one check is sufficient
+                setTimeout(() => adjustWindowHeight(), 50);
+            }
         };
         
         // Function to parse markdown and apply styling
@@ -679,30 +687,27 @@ git shortlog -sn --since="1 month ago"
                 .replace(/\r\n/g, '\n')
                 .replace(/\r/g, '\n');
             
-            // If streaming, skip markdown parsing to avoid issues with partial content
-            if (addCursor) {
-                // During streaming, just show the raw text to avoid parsing issues
-                element.innerHTML = escapeHtml(cleanText) + '<span class="cursor">|</span>';
-                return;
-            }
-            
             console.log('📝 Processing text for markdown:', {
                 originalLength: text.length,
                 cleanedLength: cleanText.length,
-                firstChars: cleanText.substring(0, 100),
-                containsDuplication: cleanText.includes('DDockerockerfilefile') || cleanText.includes('ToTo')
+                isStreaming: addCursor,
+                firstChars: cleanText.substring(0, 100)
             });
             
-            // Parse markdown and convert to HTML with CSS classes (only when not streaming)
+            // Always parse markdown, even during streaming for real-time formatting
             const parsedHTML = parseMarkdownToHTML(cleanText);
             
+            // Add cursor if streaming
+            const finalHTML = addCursor ? parsedHTML + '<span class="cursor">|</span>' : parsedHTML;
+            
             // Set the content with parsed HTML
-            element.innerHTML = parsedHTML;
+            element.innerHTML = finalHTML;
             
             console.log('✅ Markdown parsed and applied:', {
                 originalLength: cleanText.length,
                 parsedLength: parsedHTML.length,
-                hasMarkdown: parsedHTML !== cleanText
+                hasMarkdown: parsedHTML !== cleanText,
+                isStreaming: addCursor
             });
         }
         
@@ -734,79 +739,66 @@ git shortlog -sn --since="1 month ago"
             typeNext();
         }
         
-        // Adjust window height based on content automatically
+        // Optimized window height adjustment for smooth real-time streaming
         let resizeTimeout = null;
+        let lastResizeHeight = 0;
+        let isResizing = false;
+        
         function adjustWindowHeight() {
-            // Throttle resize calls to avoid excessive API calls during streaming
+            // Clear any pending resize timeout
             if (resizeTimeout) {
                 clearTimeout(resizeTimeout);
             }
             
-            resizeTimeout = setTimeout(() => {
+            // Use requestAnimationFrame for smooth 60fps updates
+            resizeTimeout = requestAnimationFrame(() => {
+                if (isResizing) return; // Prevent overlapping resize calls
+                
                 const contentArea = document.getElementById('contentArea');
-                if (contentArea && window.__TAURI__) {
-                    // Use multiple animation frames for accurate measurement
-                    requestAnimationFrame(() => {
-                        requestAnimationFrame(() => {
-                            // Get screen dimensions for dynamic max height
-                            const screenHeight = window.screen.availHeight || window.screen.height || 1080;
-                            const maxScreenHeight = Math.floor(screenHeight * 0.85); // Use 85% of screen height
-                            
-                            // Force a complete layout calculation
-                            document.body.style.height = 'auto';
-                            
-                            // Calculate height based on content area directly
-                            const contentHeight = contentArea.scrollHeight;
-                            const headerHeight = 50; // Close button and padding
-                            const contentPadding = 32; // Content area padding (16px * 2)
-                            const windowPadding = 20; // Window padding
-                            
-                            const minHeight = 100;
-                            const maxHeight = maxScreenHeight;
-                            
-                            // Calculate total window height needed based on content area
-                            const totalHeight = Math.min(Math.max(contentHeight + headerHeight + contentPadding + windowPadding, minHeight), maxHeight);
-                            
-                            console.log('🔧 Auto-adjusting window height:', {
-                                documentScrollHeight: document.body.scrollHeight,
-                                documentOffsetHeight: document.body.offsetHeight,
-                                contentAreaScrollHeight: contentArea.scrollHeight,
-                                contentAreaOffsetHeight: contentArea.offsetHeight,
-                                contentHeight: contentHeight,
-                                headerHeight: headerHeight,
-                                contentPadding: contentPadding,
-                                windowPadding: windowPadding,
-                                finalHeight: totalHeight,
-                                maxScreenHeight: maxScreenHeight,
-                                contentText: contentArea.textContent?.substring(0, 50) + '...',
-                                windowInnerHeight: window.innerHeight,
-                                windowOuterHeight: window.outerHeight
-                            });
-                            
-                            // Use Tauri to resize the window to match content
-                            if (window.__TAURI__ && window.__TAURI__.invoke) {
-                                window.__TAURI__.invoke('resize_ai_response_window', { height: totalHeight })
-                                    .then(() => console.log(`✅ Window auto-resized to ${totalHeight}px`))
-                                    .catch(err => console.warn('❌ Resize failed:', err));
-                            } else {
-                                console.warn('⚠️ Tauri API not available for resize, using fallback');
-                                // Fallback: Try to communicate with parent window or use postMessage
-                                try {
-                                    if (window.parent && window.parent.postMessage) {
-                                        window.parent.postMessage({
-                                            type: 'resize_request',
-                                            height: totalHeight
-                                        }, '*');
-                                    }
-                                } catch (e) {
-                                    console.error('Fallback resize failed:', e);
-                                }
-                            }
+                if (!contentArea || !window.__TAURI__) return;
+                
+                // Force layout recalculation to get accurate height during streaming
+                contentArea.offsetHeight; // Trigger reflow
+                
+                // Fast height calculation - use both scrollHeight and offsetHeight for accuracy
+                const contentHeight = Math.max(contentArea.scrollHeight, contentArea.offsetHeight);
+                const headerHeight = 50;
+                const contentPadding = 32;
+                const windowPadding = 20;
+                
+                // Calculate new height
+                const screenHeight = window.screen.availHeight || 1080;
+                const maxHeight = Math.floor(screenHeight * 0.85);
+                const minHeight = 100;
+                
+                const newHeight = Math.min(Math.max(
+                    contentHeight + headerHeight + contentPadding + windowPadding, 
+                    minHeight
+                ), maxHeight);
+                
+                // Use smaller threshold during streaming for more responsive updates
+                const threshold = streamingActive ? 2 : 5;
+                if (Math.abs(newHeight - lastResizeHeight) > threshold) {
+                    isResizing = true;
+                    lastResizeHeight = newHeight;
+                    
+                    // Async resize to avoid blocking UI
+                    window.__TAURI__.invoke('resize_ai_response_window', { height: newHeight })
+                        .then(() => {
+                            console.log(`📏 Smooth resize to ${newHeight}px`);
+                            isResizing = false;
+                        })
+                        .catch(err => {
+                            console.warn('❌ Resize failed:', err);
+                            isResizing = false;
                         });
-                    });
+                } else {
+                    // Height hasn't changed significantly, no resize needed
+                    console.log(`📏 Skip resize - height diff: ${Math.abs(newHeight - lastResizeHeight)}px`);
                 }
+                
                 resizeTimeout = null;
-            }, 30); // Very responsive - 30ms throttle
+            });
         }
         
         // Set up observers for automatic height adjustment
