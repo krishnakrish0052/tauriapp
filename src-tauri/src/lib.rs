@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use tauri::{Builder, AppHandle, Window, State, Manager};
+use tauri::{Builder, AppHandle, Window, State, Manager, Emitter};
 use serde::{Serialize, Deserialize};
 use log::{info, error, warn};
 use base64::Engine;
@@ -377,21 +377,38 @@ async fn pollinations_generate_answer_streaming(
         warn!("Failed to show AI response window: {}", e);
     }
 
-    // Stream the response with callback to update UI
+    // Initialize streaming state
+    info!("🚀 Starting progressive streaming for AI response window");
+    let _ = app_handle.emit("ai-stream-start", ());
+
+    // Stream the response with callback to update UI progressively
     let app_handle_clone = app_handle.clone();
     let result = client.generate_answer_streaming(
         &payload.question, 
         &context, 
         model,
         move |token: &str| {
-            // Send streaming token to the AI response window
+            info!("📝 Streaming token: '{}' (length: {})", token.chars().take(50).collect::<String>(), token.len());
+            
+            // 🔍 DEBUG: Log the exact token being processed
+            info!("🔍 BACKEND TOKEN DEBUG: Raw token received: '{}' (length: {})", 
+                token.replace('\n', "\\n").replace('\r', "\\r"), token.len());
+            
+            // Emit token event for progressive display
+            let _ = app_handle_clone.emit("ai-stream-token", token);
+            info!("📡 BACKEND: Emitted 'ai-stream-token' event with token: '{}'", 
+                token.chars().take(50).collect::<String>());
+            
+            // Also send via direct window communication for immediate display
             let data = AiResponseData {
-                message_type: "stream".to_string(),
+                message_type: "stream-token".to_string(),
                 text: Some(token.to_string()),
                 error: None,
             };
             let app_handle_for_async = app_handle_clone.clone();
             tokio::spawn(async move {
+                info!("🔄 BACKEND: About to send stream-token to native window: '{}'", 
+                    data.text.as_ref().unwrap().chars().take(50).collect::<String>());
                 if let Err(e) = send_ai_response_data(app_handle_for_async, data).await {
                     error!("Failed to send streaming token to UI: {}", e);
                 }
@@ -401,6 +418,11 @@ async fn pollinations_generate_answer_streaming(
 
     match result {
         Ok(full_response) => {
+            info!("✅ Streaming completed. Full response length: {}", full_response.len());
+            
+            // Emit completion event
+            let _ = app_handle.emit("ai-stream-complete", full_response.clone());
+            
             // Send completion signal
             let data = AiResponseData {
                 message_type: "complete".to_string(),
@@ -408,23 +430,28 @@ async fn pollinations_generate_answer_streaming(
                 error: None,
             };
             let app_handle_for_complete = app_handle.clone();
-            let completion_data = data;
             tokio::spawn(async move {
-                if let Err(e) = send_ai_response_data(app_handle_for_complete, completion_data).await {
+                if let Err(e) = send_ai_response_data(app_handle_for_complete, data).await {
                     error!("Failed to send completion signal to UI: {}", e);
                 }
             });
             Ok(full_response)
         },
         Err(e) => {
+            error!("❌ Streaming failed: {}", e);
+            
+            // Emit error event
+            let _ = app_handle.emit("ai-stream-error", e.to_string());
+            
             // Send error signal
             let data = AiResponseData {
                 message_type: "error".to_string(),
                 text: None,
                 error: Some(e.to_string()),
             };
+            let app_handle_for_error = app_handle.clone();
             tokio::spawn(async move {
-                if let Err(send_err) = send_ai_response_data(app_handle, data).await {
+                if let Err(send_err) = send_ai_response_data(app_handle_for_error, data).await {
                     error!("Failed to send error signal to UI: {}", send_err);
                 }
             });
@@ -467,16 +494,25 @@ async fn pollinations_generate_answer_post_streaming(
         warn!("Failed to show AI response window: {}", e);
     }
 
-    // Stream the response with callback to update UI
+    // Initialize streaming state
+    info!("🚀 Starting progressive streaming (POST) for AI response window");
+    let _ = app_handle.emit("ai-stream-start", ());
+
+    // Stream the response with callback to update UI progressively
     let app_handle_clone = app_handle.clone();
     let result = client.generate_answer_post_streaming(
         &payload.question, 
         &context, 
         model,
         move |token: &str| {
-            // Send streaming token to the AI response window
+            info!("📝 Streaming token (POST): '{}' (length: {})", token.chars().take(50).collect::<String>(), token.len());
+            
+            // Emit token event for progressive display
+            let _ = app_handle_clone.emit("ai-stream-token", token);
+            
+            // Also send via direct window communication for immediate display
             let data = AiResponseData {
-                message_type: "stream".to_string(),
+                message_type: "stream-token".to_string(),
                 text: Some(token.to_string()),
                 error: None,
             };
@@ -491,6 +527,11 @@ async fn pollinations_generate_answer_post_streaming(
 
     match result {
         Ok(full_response) => {
+            info!("✅ Streaming (POST) completed. Full response length: {}", full_response.len());
+            
+            // Emit completion event
+            let _ = app_handle.emit("ai-stream-complete", full_response.clone());
+            
             // Send completion signal
             let data = AiResponseData {
                 message_type: "complete".to_string(),
@@ -506,6 +547,11 @@ async fn pollinations_generate_answer_post_streaming(
             Ok(full_response)
         },
         Err(e) => {
+            error!("❌ Streaming (POST) failed: {}", e);
+            
+            // Emit error event
+            let _ = app_handle.emit("ai-stream-error", e.to_string());
+            
             // Send error signal
             let data = AiResponseData {
                 message_type: "error".to_string(),
@@ -1191,6 +1237,18 @@ async fn send_ai_response_data(app_handle: AppHandle, data: AiResponseData) -> R
                         console.log('updateContent function not found');
                     }}
                 "#, escaped_text)
+            }
+            "stream-token" => {
+                let token = data.text.as_ref().map(|t| t.clone()).unwrap_or_default();
+                let escaped_token = token.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
+                format!(r#"
+                    if (window.updateContent) {{
+                        console.log('🎯 AI RESPONSE WINDOW: Received stream token:', '{}');
+                        window.updateContent('stream-token', {{ token: "{}" }});
+                    }} else {{
+                        console.log('updateContent function not found for stream-token');
+                    }}
+                "#, escaped_token.chars().take(50).collect::<String>(), escaped_token)
             }
             "complete" => {
                 let text = data.text.as_ref().map(|t| t.clone()).unwrap_or_default();

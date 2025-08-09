@@ -496,7 +496,91 @@ class MockMateController {
                 this.handleWebSocketMessage(event.payload);
             });
 
-            console.log('Event listeners setup successfully');
+            // ===== NEW: AI STREAMING EVENT LISTENERS =====
+            
+            // Listen for AI stream start
+            await listen('ai-stream-start', (event) => {
+                console.log('🚀 AI stream started');
+                this.isStreaming = true;
+                this.streamingText = '';
+                
+                // Show and prepare the AI response window
+                this.showResponseWindow();
+                const contentEl = this.ensureUiResponseWindow();
+                if (contentEl) {
+                    contentEl.textContent = '';
+                    contentEl.style.fontStyle = 'italic';
+                    contentEl.style.opacity = '0.7';
+                }
+            });
+            
+            // Listen for individual AI tokens for progressive display
+            await listen('ai-stream-token', (event) => {
+                const token = event.payload;
+                console.log('🎯 Received AI stream token:', token.substring(0, 20) + (token.length > 20 ? '...' : ''));
+                
+                // Add token to accumulated text
+                this.streamingText += token;
+                
+                // Update UI with progressive content
+                const contentEl = this.ensureUiResponseWindow();
+                if (contentEl) {
+                    // Use textContent to avoid character encoding issues and prevent XSS
+                    // Then convert to markdown for display
+                    const markdownText = this.renderMarkdown(this.streamingText);
+                    contentEl.innerHTML = markdownText + '<span class="cursor">|</span>';
+                    contentEl.style.fontStyle = 'normal';
+                    contentEl.style.opacity = '1';
+                    contentEl.style.color = 'var(--text-primary)';
+                    // Throttled height adjustment for better performance
+                    this.throttledAdjustHeight();
+                }
+                
+                // DON'T call sendToAiWindow here - it causes double accumulation
+                // The backend already handles sending to native AI window via send_ai_response_data
+            });
+            
+            // Listen for AI stream completion
+            await listen('ai-stream-complete', (event) => {
+                const finalText = event.payload;
+                console.log('✅ AI stream completed. Final length:', finalText.length);
+                
+                this.isStreaming = false;
+                this.streamingText = finalText;
+                
+                // Update UI with final content
+                const contentEl = this.ensureUiResponseWindow();
+                if (contentEl) {
+                    contentEl.textContent = finalText;
+                    contentEl.style.fontStyle = 'normal';
+                    contentEl.style.opacity = '1';
+                    // Immediate height adjustment for final content
+                    this.adjustAiWindowHeight();
+                }
+            });
+            
+            // Listen for AI stream errors
+            await listen('ai-stream-error', (event) => {
+                const error = event.payload;
+                console.error('❌ AI stream error:', error);
+                
+                this.isStreaming = false;
+                this.streamingText = '';
+                
+                // Update UI with error
+                const contentEl = this.ensureUiResponseWindow();
+                if (contentEl) {
+                    contentEl.textContent = `Error: ${error}`;
+                    contentEl.style.fontStyle = 'normal';
+                    contentEl.style.opacity = '1';
+                    contentEl.style.color = 'var(--danger)';
+                    this.adjustAiWindowHeight();
+                }
+                
+                this.showNotification(`AI streaming error: ${error}`, 'error');
+            });
+
+            console.log('✅ Event listeners setup successfully (including AI streaming)');
         } catch (error) {
             console.error('Failed to setup event listeners:', error);
         }
@@ -932,8 +1016,8 @@ class MockMateController {
 
     updateTranscription(text, isFinal = false) {
         if (text && text.trim()) {
-            const transcriptionEl = document.getElementById('transcriptionText');
-            const transcriptionArea = transcriptionEl.parentElement; // Get the scrollable container
+            // ULTRA-FAST performance tracking
+            const now = performance.now();
             
             if (isFinal) {
                 // Final transcription - append to full transcription
@@ -944,30 +1028,61 @@ class MockMateController {
                 }
                 this.currentTranscription = this.fullTranscription;
                 this.interimTranscription = '';
-                
-                // Show full transcription
-                transcriptionEl.textContent = this.fullTranscription;
-                transcriptionEl.classList.add('active');
-                transcriptionEl.classList.remove('listening', 'interim');
             } else {
-                // Interim transcription - show with different styling
+                // Interim transcription - update state only
                 this.interimTranscription = text;
-                const displayText = this.fullTranscription + 
-                    (this.fullTranscription ? ' ' : '') + 
-                    `${text}...`;
-                
-                transcriptionEl.textContent = displayText;
-                transcriptionEl.classList.add('interim');
-                transcriptionEl.classList.remove('listening');
             }
             
-            // Auto-scroll to show the latest text (scroll to the right)
-            if (transcriptionArea) {
-                // Use requestAnimationFrame for smooth scrolling
+            // ULTRA-FAST throttled DOM updates (max 60fps for smooth performance)
+            if (!this.lastUpdateTime || now - this.lastUpdateTime > 16.67) { // ~60fps
+                this.renderTranscriptionToDOM(isFinal);
+                this.lastUpdateTime = now;
+            } else if (!this.updateRequestId) {
+                // Queue next update for smooth animation
+                this.updateRequestId = requestAnimationFrame(() => {
+                    this.renderTranscriptionToDOM(isFinal);
+                    this.updateRequestId = null;
+                    this.lastUpdateTime = performance.now();
+                });
+            }
+        }
+    }
+    
+    // ULTRA-FAST DOM rendering with optimizations
+    renderTranscriptionToDOM(isFinal) {
+        const transcriptionEl = document.getElementById('transcriptionText');
+        const transcriptionArea = transcriptionEl.parentElement;
+        
+        if (isFinal) {
+            // Final transcription - immediate update with subtle animation
+            transcriptionEl.textContent = this.fullTranscription;
+            transcriptionEl.classList.add('active');
+            transcriptionEl.classList.remove('listening', 'interim');
+            
+            // Subtle final result animation
+            transcriptionEl.style.transform = 'translateY(-1px)';
+            transcriptionEl.style.transition = 'all 0.1s ease-out';
+            requestAnimationFrame(() => {
+                transcriptionEl.style.transform = 'translateY(0)';
+            });
+        } else {
+            // Interim transcription - ultra-fast update
+            const displayText = this.fullTranscription + 
+                (this.fullTranscription ? ' ' : '') + 
+                this.interimTranscription + '...';
+            
+            transcriptionEl.textContent = displayText;
+            transcriptionEl.classList.add('interim');
+            transcriptionEl.classList.remove('listening');
+        }
+        
+        // ULTRA-SMOOTH scrolling with multi-frame animation
+        if (transcriptionArea) {
+            requestAnimationFrame(() => {
                 requestAnimationFrame(() => {
                     transcriptionArea.scrollLeft = transcriptionArea.scrollWidth;
                 });
-            }
+            });
         }
     }
 
@@ -1023,6 +1138,45 @@ class MockMateController {
         if (message.type === 'transcription') {
             this.updateTranscription(message.text);
         }
+    }
+
+    // Simple markdown renderer for real-time streaming display
+    renderMarkdown(text) {
+        if (!text) return '';
+        
+        // Basic markdown rendering for streaming display
+        let html = text
+            // Escape HTML first to prevent XSS
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            // Handle code blocks
+            .replace(/```([\s\S]*?)```/g, '<pre style="background: rgba(255,255,255,0.1); padding: 12px; border-radius: 8px; margin: 8px 0; overflow-x: auto;"><code>$1</code></pre>')
+            // Handle inline code
+            .replace(/`([^`]+)`/g, '<code style="background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-family: monospace;">$1</code>')
+            // Handle bold text
+            .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+            // Handle italic text
+            .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+            // Handle headers
+            .replace(/^### (.*$)/gm, '<h3 style="margin: 16px 0 8px 0; color: var(--accent); font-size: 16px;">$1</h3>')
+            .replace(/^## (.*$)/gm, '<h2 style="margin: 16px 0 8px 0; color: var(--accent); font-size: 18px;">$1</h2>')
+            .replace(/^# (.*$)/gm, '<h1 style="margin: 16px 0 8px 0; color: var(--accent); font-size: 20px;">$1</h1>')
+            // Handle bullet points
+            .replace(/^- (.*$)/gm, '<li style="margin: 4px 0; list-style: none;">• $1</li>')
+            .replace(/^\* (.*$)/gm, '<li style="margin: 4px 0; list-style: none;">• $1</li>')
+            // Handle numbered lists
+            .replace(/^(\d+)\. (.*$)/gm, '<li style="margin: 4px 0; list-style: none;">$1. $2</li>')
+            // Handle line breaks
+            .replace(/\n\n/g, '</p><p style="margin: 12px 0;">')
+            .replace(/\n/g, '<br>');
+        
+        // Wrap in paragraph if not already wrapped
+        if (!html.includes('<p>') && !html.includes('<h1>') && !html.includes('<h2>') && !html.includes('<h3>')) {
+            html = `<p style="margin: 0;">${html}</p>`;
+        }
+        
+        return html;
     }
 
     // Create AI Response Window
@@ -1376,12 +1530,25 @@ class MockMateController {
                 this.resetAiWindowHeight();
             }
             
-            // For streaming, data should be the new token/chunk to add
-            const newToken = typeof data === 'string' ? data : data?.text || '';
-            if (newToken) {
-                // Only add the new token, not replace entire text
-                this.streamingText += newToken;
-                console.log(`📝 Added token: "${newToken}" | Total length: ${this.streamingText.length}`);
+            // For streaming, data should be the full accumulated text (legacy mode)
+            const fullText = typeof data === 'string' ? data : data?.text || '';
+            this.streamingText = fullText;
+            console.log(`📝 Updated with full text | Total length: ${this.streamingText.length}`);
+        } else if (type === 'stream-token') {
+            // Handle individual token for progressive display
+            const token = typeof data === 'string' ? data : data?.token || '';
+            if (!this.isStreaming) {
+                // Start of a new progressive stream - reset accumulator
+                this.streamingText = '';
+                this.isStreaming = true;
+                console.log('🚀 Starting new progressive streaming session');
+                this.resetAiWindowHeight();
+            }
+            
+            if (token) {
+                // Add individual token to accumulated text
+                this.streamingText += token;
+                console.log(`🎯 Added individual token: "${token.substring(0, 20)}..." | Total length: ${this.streamingText.length}`);
             }
         } else if (type === 'complete') {
             // Stream is complete
@@ -1408,21 +1575,27 @@ class MockMateController {
                 return;
             }
             
-            if (type === 'stream') {
-                // Show accumulated streaming text with cursor
-                contentEl.innerHTML = this.streamingText + '<span class="cursor">|</span>';
+            if (type === 'stream' || type === 'stream-token') {
+                // Show accumulated streaming text with cursor and markdown rendering
+                const markdownText = this.renderMarkdown(this.streamingText);
+                contentEl.innerHTML = markdownText + '<span class="cursor">|</span>';
+                contentEl.style.fontStyle = 'normal';
+                contentEl.style.opacity = '1';
+                contentEl.style.color = 'var(--text-primary)';
                 // Adjust window height for streaming content (throttled)
                 this.throttledAdjustHeight();
             } else if (type === 'complete') {
-                // Show final text without cursor
+                // Show final text without cursor and with markdown rendering
                 const finalText = typeof data === 'string' ? data : data?.text || this.streamingText;
-                contentEl.textContent = finalText;
+                const markdownText = this.renderMarkdown(finalText);
+                contentEl.innerHTML = markdownText;
                 // Reset content styling
                 contentEl.style.fontStyle = 'normal';
                 contentEl.style.opacity = '1';
                 // Adjust window height for final content (immediate)
                 this.adjustAiWindowHeight();
             } else if (type === 'error') {
+                // Show error message
                 const errorMsg = typeof data === 'string' ? data : data?.error || 'Unknown error';
                 contentEl.textContent = `Error: ${errorMsg}`;
                 // Reset content styling

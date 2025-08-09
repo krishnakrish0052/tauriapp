@@ -217,10 +217,15 @@ Please provide a comprehensive and professional answer to this interview questio
                             }
                             
                             if !content.is_empty() {
+                                // 🔍 DEBUG: Log exact content being processed
+                                info!("🔍 POLLINATIONS DEBUG: SSE parsed content: '{}' (length: {})", 
+                                    content.replace('\n', "\\n").replace('\r', "\\r"), content.len());
+                                
+                                // Send individual token for progressive display
+                                on_token(&content);
                                 full_response.push_str(&content);
-                                // Send accumulated text to callback, not just the token
-                                on_token(&full_response);
-                                info!("Streamed token: '{}', total length: {}", content.chars().take(50).collect::<String>(), full_response.len());
+                                info!("📤 POLLINATIONS: Sent token to callback: '{}', token length: {}, total length: {}", 
+                                    content.chars().take(50).collect::<String>(), content.len(), full_response.len());
                             }
                         }
                     }
@@ -236,8 +241,9 @@ Please provide a comprehensive and professional answer to this interview questio
         if !buffer.trim().is_empty() {
             if let Some(content) = self.parse_sse_line(buffer.trim()) {
                 if content != "[DONE]" && !content.is_empty() {
+                    // Send individual token for progressive display
+                    on_token(&content);
                     full_response.push_str(&content);
-                    on_token(&full_response);
                 }
             }
         }
@@ -437,10 +443,10 @@ Please provide a comprehensive and professional answer to this interview questio
                             }
                             
                             if !content.is_empty() {
+                                // Send individual token for progressive display
+                                on_token(&content);
                                 full_response.push_str(&content);
-                                // Send accumulated text to callback, not just the token
-                                on_token(&full_response);
-                                info!("POST streamed token: '{}', total length: {}", content.chars().take(50).collect::<String>(), full_response.len());
+                                info!("POST streamed individual token: '{}', token length: {}, total length: {}", content.chars().take(50).collect::<String>(), content.len(), full_response.len());
                             }
                         }
                     }
@@ -456,8 +462,9 @@ Please provide a comprehensive and professional answer to this interview questio
         if !buffer.trim().is_empty() {
             if let Some(content) = self.parse_sse_line(buffer.trim()) {
                 if content != "[DONE]" && !content.is_empty() {
+                    // Send individual token for progressive display
+                    on_token(&content);
                     full_response.push_str(&content);
-                    on_token(&full_response);
                 }
             }
         }

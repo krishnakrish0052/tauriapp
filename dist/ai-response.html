@@ -40,7 +40,7 @@
             height: auto;
             min-height: 80px;
             line-height: 1.6;
-            font-size: 14px;
+            font-size: 10.74px;
             overflow: visible;
             /* Remove any max-height constraints */
             max-height: none;
@@ -106,7 +106,7 @@
         }
         
         .brand h2 {
-            font-size: 18px; margin: 0; font-weight: 600; letter-spacing: -0.2px;
+            font-size: 13.81px; margin: 0; font-weight: 600; letter-spacing: -0.2px;
             background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
@@ -115,7 +115,7 @@
         
         .status-pill {
             background: rgba(0, 200, 150, 0.15); color: var(--success);
-            padding: 6px 12px; border-radius: 20px; font-size: 12px;
+            padding: 6px 12px; border-radius: 20px; font-size: 9.2px;
             font-weight: 500; border: 1px solid rgba(0, 200, 150, 0.2);
             margin-left: 16px; animation: pulse 2s infinite;
         }
@@ -126,7 +126,7 @@
             width: 28px; height: 28px; background: rgba(0, 0, 0, 0.8);
             border: 1px solid var(--border); border-radius: 6px; color: var(--text-secondary);
             display: flex; align-items: center; justify-content: center;
-            cursor: pointer; transition: all 0.2s ease; font-size: 14px;
+            cursor: pointer; transition: all 0.2s ease; font-size: 10.74px;
         }
         
         .utility-btn:hover { background: rgba(0, 0, 0, 0.9); color: var(--text-primary); transform: translateY(-1px); }
@@ -136,7 +136,7 @@
             padding: 16px; 
             margin: 0;
             background: transparent; 
-            font-size: 21px;
+            font-size: 16.11px;
             font-weight: bold;
             line-height: 1.3; 
             height: auto;
@@ -161,7 +161,7 @@
         
         .material-icons {
             font-family: 'Material Icons'; font-weight: normal; font-style: normal;
-            font-size: 20px; display: inline-block; line-height: 1; text-transform: none;
+            font-size: 15.34px; display: inline-block; line-height: 1; text-transform: none;
             letter-spacing: normal; word-wrap: normal; white-space: nowrap; direction: ltr;
             -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
             -moz-osx-font-smoothing: grayscale; font-feature-settings: 'liga';
@@ -203,6 +203,116 @@
         @keyframes slideOutToBottom {
             from { transform: translateY(0); opacity: 1; }
             to { transform: translateY(20px); opacity: 0; }
+        }
+        
+        /* Markdown Formatting CSS */
+        .markdown-content {
+            /* Base markdown styling */
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        
+        /* Bold text: **text** */
+        .markdown-content {
+            /* Use CSS to style markdown patterns */
+            position: relative;
+        }
+        
+        /* JavaScript will add these classes for markdown patterns */
+        .md-bold {
+            font-weight: bold;
+            color: var(--text-primary);
+        }
+        
+        .md-italic {
+            font-style: italic;
+            color: var(--text-secondary);
+        }
+        
+        .md-bold-italic {
+            font-weight: bold;
+            font-style: italic;
+            color: var(--text-primary);
+        }
+        
+        /* Header styles for markdown */
+        .md-header-1 {
+            font-size: 1.6em;
+            font-weight: bold;
+            color: var(--accent);
+            margin: 16px 0 8px 0;
+            display: block;
+        }
+        
+        .md-header-2 {
+            font-size: 1.4em;
+            font-weight: bold;
+            color: var(--accent);
+            margin: 14px 0 7px 0;
+            display: block;
+        }
+        
+        .md-header-3 {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: var(--accent);
+            margin: 12px 0 6px 0;
+            display: block;
+        }
+        
+        /* Code blocks and inline code */
+        .md-code-inline {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 0.9em;
+            color: var(--accent);
+        }
+        
+        .md-code-block {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            margin: 8px 0;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 0.9em;
+            color: var(--text-primary);
+            overflow-x: auto;
+            display: block;
+        }
+        
+        /* Remove problematic list item styles that were causing dash issues */
+        
+        /* Link styling */
+        .md-link {
+            color: var(--accent);
+            text-decoration: underline;
+            cursor: pointer;
+        }
+        
+        .md-link:hover {
+            color: var(--accent-secondary);
+        }
+        
+        /* Blockquote styling */
+        .md-blockquote {
+            border-left: 4px solid var(--accent);
+            padding-left: 16px;
+            margin: 8px 0;
+            color: var(--text-muted);
+            font-style: italic;
+            display: block;
+        }
+        
+        /* Horizontal rule */
+        .md-hr {
+            border: none;
+            border-top: 2px solid var(--border);
+            margin: 16px 0;
+            display: block;
         }
     </style>
     <!-- Tauri API Script -->
@@ -268,15 +378,54 @@
             
             // Test resize button event listener
             testResizeBtn.addEventListener('click', async () => {
-                console.log('🧪 Test resize button clicked');
+                console.log('🧪 Test resize button clicked - Testing markdown formatting!');
                 const contentArea = document.getElementById('contentArea');
                 
-                // Add a lot of test content to trigger resize
-                const testContent = `Test content to trigger window resize!\n\nThis is line 1\nThis is line 2\nThis is line 3\nThis is line 4\nThis is line 5\nThis is line 6\nThis is line 7\nThis is line 8\nThis is line 9\nThis is line 10\n\nLorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.\n\nDuis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.\n\nSed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo.`;
+                // Add markdown test content to demonstrate formatting
+                const testMarkdownContent = `# DORA Metrics in DevOps
+
+**Introduction to DORA Metrics:**
+DORA metrics are a set of four key performance indicators (KPIs) that measure the effectiveness of DevOps practices in improving software delivery performance.
+
+## The Four DORA Metrics
+
+### 1. **Lead Time for Changes**
+- **Definition**: The time from code commit to code successfully running in production
+- **What it measures**: How quickly your team can deliver changes to users
+- *High-performing teams*: Less than one day
+- *Low-performing teams*: Between one week and one month
+
+### 2. **Deployment Frequency**
+- **Definition**: How often your team deploys code to production
+- **What it measures**: The pace of software delivery
+- ***High-performing teams***: Multiple deployments per day
+
+### 3. **Mean Time to Recovery (MTTR)**
+Measures your team's ability to restore service quickly.
+
+> "The faster you can recover from failures, the more resilient your system becomes."
+
+### Key Benefits:
+- Data-driven decision making
+- Balanced performance view
+- Cultural transformation
+- Process improvements
+
+For more information, check out [DevOps Research](https://dora.dev) and use \`git\` commands like \`git log\` to analyze your metrics.
+
+\`\`\`bash
+git log --oneline --since="1 month ago"
+git shortlog -sn --since="1 month ago"
+\`\`\`
+
+---
+
+**Happy measuring!** 🚀`;
                 
-                contentArea.textContent = testContent;
+                // Use the markdown parsing function instead of plain text
+                updateContentWithMarkdown(contentArea, testMarkdownContent, false);
                 
-                console.log('📏 Content updated, forcing resize...');
+                console.log('📏 Markdown test content updated, forcing resize...');
                 adjustWindowHeight();
             });
             
@@ -340,62 +489,229 @@
         // Global function to update content (called from Tauri)
         window.updateContent = function(type, data) {
             console.log('🎯 AI RESPONSE WINDOW: updateContent called with type:', type);
-            console.log('🎯 AI RESPONSE WINDOW: updateContent data:', data);
-            console.log('🎯 AI RESPONSE WINDOW: current streamingActive:', streamingActive);
+            console.log('🎯 AI RESPONSE WINDOW: Raw data received:', JSON.stringify(data).substring(0, 200));
             const contentArea = document.getElementById('contentArea');
+            
+            // Check if data is actually JSON string instead of parsed object
+            if (typeof data === 'string' && (data.startsWith('{') || data.startsWith('"{'))) {
+                console.warn('⚠️ Data appears to be a JSON string, attempting to parse');
+                try {
+                    if (data.startsWith('"')) {
+                        data = JSON.parse(data);
+                        if (typeof data === 'string') {
+                            data = JSON.parse(data);
+                        }
+                    } else {
+                        data = JSON.parse(data);
+                    }
+                    console.log('✅ Successfully parsed JSON data');
+                } catch (e) {
+                    console.error('❌ Error parsing JSON data:', e);
+                    return; // Exit if data is corrupted
+                }
+            }
+            
+            // Extract the actual text/token content
+            let incomingText = '';
+            if (data && typeof data === 'object') {
+                if (type === 'stream') {
+                    incomingText = data.text || '';
+                } else if (type === 'stream-token') {
+                    incomingText = data.token || '';
+                } else if (type === 'complete') {
+                    incomingText = data.text || '';
+                }
+                
+                // Clean up execution context JSON if it accidentally got included
+                if (incomingText && incomingText.includes('{"execution_context"')) {
+                    const cleanedText = incomingText.split('{"execution_context"')[0];
+                    console.warn('⚠️ Removed execution context from text:', {
+                        original: incomingText.substring(0, 100),
+                        cleaned: cleanedText.substring(0, 100)
+                    });
+                    incomingText = cleanedText;
+                }
+            }
             
             switch (type) {
                 case 'stream':
-                    // Main.js sends the FULL accumulated text each time, not incremental tokens
-                    const fullText = data.text || '';
-                    
-                    // Mark that we're in a streaming session
+                    // Full text replacement - this should be the complete accumulated text
                     if (!streamingActive) {
-                        console.log('🚀 New streaming session started - resetting to initial state');
+                        console.log('🚀 New streaming session started');
                         resetToInitialState();
                         streamingActive = true;
                     }
                     
-                    // Use the full text directly (no accumulation needed since main.js handles that)
-                    currentText = fullText;
-                    contentArea.innerHTML = currentText + '<span class="cursor">|</span>';
+                    // For 'stream' type, we expect the full accumulated text
+                    currentText = incomingText;
                     
-                    console.log('📝 Stream update received:', {
-                        fullTextLength: fullText.length,
-                        textPreview: fullText.substring(0, 100) + (fullText.length > 100 ? '...' : '')
+                    console.log('🔄 Stream update (full replacement):', {
+                        type: 'stream',
+                        newLength: currentText.length,
+                        preview: currentText.substring(0, 150),
+                        lastChars: currentText.substring(Math.max(0, currentText.length - 50))
                     });
+                    break;
                     
-                    // Adjust window height immediately for each stream update with slight delay
-                    setTimeout(() => adjustWindowHeight(), 50);
+                case 'stream-token':
+                    // Incremental token addition
+                    if (!streamingActive) {
+                        console.log('🚀 New token streaming session started');
+                        resetToInitialState();
+                        streamingActive = true;
+                        currentText = '';
+                    }
+                    
+                    // For 'stream-token', we append the new token
+                    const previousLength = currentText.length;
+                    currentText += incomingText;
+                    
+                    console.log('🔄 Token stream update (incremental):', {
+                        type: 'stream-token',
+                        tokenReceived: JSON.stringify(incomingText),
+                        tokenLength: incomingText.length,
+                        previousLength: previousLength,
+                        newTotalLength: currentText.length,
+                        lastChars: currentText.substring(Math.max(0, currentText.length - 100))
+                    });
                     break;
                     
                 case 'complete':
-                    // Clear any existing typewriter effect
-                    if (typewriterTimeout) {
-                        clearTimeout(typewriterTimeout);
+                    // Final text - use provided text or keep accumulated
+                    if (incomingText && incomingText.trim()) {
+                        currentText = incomingText;
                     }
-                    
-                    // Final response - use the full accumulated text
-                    const finalText = data.text || currentText; // Use provided text or accumulated
-                    currentText = finalText;
-                    contentArea.innerHTML = currentText;
-                    streamingActive = false; // Mark streaming as complete
+                    streamingActive = false;
                     
                     console.log('✅ Stream completed:', {
                         finalLength: currentText.length,
-                        finalText: currentText.substring(0, 100) + (currentText.length > 100 ? '...' : '')
+                        preview: currentText.substring(0, 100)
                     });
-                    
-                    adjustWindowHeight();
                     break;
                     
-                case 'error':
-                    // Error in generating response
-                    contentArea.innerHTML = `<span style="color: var(--danger);">Error: ${data.error}</span>`;
-                    adjustWindowHeight();
-                    break;
+                default:
+                    console.warn('⚠️ Unknown update type:', type);
+                    return;
             }
+            
+            // Check for duplication patterns in the current text
+            const hasDuplication = currentText.includes('**Scripted Jenkins Pipeline Example** ExampleScripted') ||
+                                 currentText.includes('ToTo create create') ||
+                                 currentText.includes('DDockerockerfilefile');
+            
+            if (hasDuplication) {
+                console.error('❌ DUPLICATION DETECTED in currentText!');
+                console.log('🔍 Full current text:', JSON.stringify(currentText));
+                console.log('🔍 Text preview:', currentText.substring(0, 200));
+            }
+            
+            // Update the display
+            updateContentWithMarkdown(contentArea, currentText, streamingActive);
+            
+            // Handle other cases
+            if (type === 'error') {
+                contentArea.innerHTML = `<span style="color: var(--danger);">Error: ${data.error}</span>`;
+            } else if (type === 'debug-raw') {
+                contentArea.textContent = incomingText || 'No text provided';
+            }
+            
+            // Adjust height after content update
+            setTimeout(() => adjustWindowHeight(), 50);
         };
+        
+        // Function to parse markdown and apply styling
+        function parseMarkdownToHTML(text) {
+            if (!text) return text;
+            
+            let html = text;
+            
+            // Parse code blocks first to protect their content (```code```)
+            html = html.replace(/```([\s\S]*?)```/g, '<span class="md-code-block">$1</span>');
+            
+            // Parse inline code (`code`) - protect from other parsing
+            html = html.replace(/`([^`]+)`/g, '<span class="md-code-inline">$1</span>');
+            
+            // Parse headers (must be at start of line)
+            html = html
+                .replace(/^### (.*$)/gim, '<div class="md-header-3">$1</div>')
+                .replace(/^## (.*$)/gim, '<div class="md-header-2">$1</div>')
+                .replace(/^# (.*$)/gim, '<div class="md-header-1">$1</div>');
+            
+            // Parse bold and italic (***text*** for bold+italic)
+            html = html.replace(/\*\*\*([^*]+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+            
+            // Parse bold (**text**)
+            html = html.replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
+            
+            // Parse italic (*text*) - be more careful with boundaries
+            html = html.replace(/\*([^*\n]+?)\*/g, '<em>$1</em>');
+            
+            // Parse links [text](url)
+            html = html.replace(/\[([^\]]+)\]\(([^\)]+)\)/g, '<a href="$2" target="_blank" style="color: var(--accent); text-decoration: underline;">$1</a>');
+            
+            // Parse blockquotes (> text)
+            html = html.replace(/^> (.+)$/gim, '<div class="md-blockquote">$1</div>');
+            
+            // Parse horizontal rules (--- or ***) - but NOT single dashes
+            html = html.replace(/^[\s]*(-{3,}|\*{3,})$/gim, '<hr style="border: none; border-top: 2px solid var(--border); margin: 16px 0;">');
+            
+            // Handle line breaks properly
+            html = html.replace(/\n\n/g, '<br><br>').replace(/\n/g, '<br>');
+            
+            return html;
+        }
+        
+        // Enhanced function to update content with markdown parsing
+        function updateContentWithMarkdown(element, text, addCursor = false) {
+            if (!element) {
+                console.warn('❌ No element provided to updateContentWithMarkdown');
+                return;
+            }
+            
+            if (!text || text.trim() === '') {
+                element.innerHTML = addCursor ? '<span class="cursor">|</span>' : 'Waiting for AI response...';
+                return;
+            }
+            
+            // Clean the text first - remove any weird encoding and normalize whitespace
+            let cleanText = text
+                .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+                .replace(/\r\n/g, '\n')
+                .replace(/\r/g, '\n');
+            
+            // If streaming, skip markdown parsing to avoid issues with partial content
+            if (addCursor) {
+                // During streaming, just show the raw text to avoid parsing issues
+                element.innerHTML = escapeHtml(cleanText) + '<span class="cursor">|</span>';
+                return;
+            }
+            
+            console.log('📝 Processing text for markdown:', {
+                originalLength: text.length,
+                cleanedLength: cleanText.length,
+                firstChars: cleanText.substring(0, 100),
+                containsDuplication: cleanText.includes('DDockerockerfilefile') || cleanText.includes('ToTo')
+            });
+            
+            // Parse markdown and convert to HTML with CSS classes (only when not streaming)
+            const parsedHTML = parseMarkdownToHTML(cleanText);
+            
+            // Set the content with parsed HTML
+            element.innerHTML = parsedHTML;
+            
+            console.log('✅ Markdown parsed and applied:', {
+                originalLength: cleanText.length,
+                parsedLength: parsedHTML.length,
+                hasMarkdown: parsedHTML !== cleanText
+            });
+        }
+        
+        // Helper function to escape HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
         
         // Typewriter effect function
         function startTypewriter(element) {
