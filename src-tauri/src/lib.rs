@@ -377,7 +377,8 @@ async fn pollinations_generate_answer_streaming(
         warn!("Failed to show AI response window: {}", e);
     }
 
-    // Initialize streaming state
+    // Initialize streaming state and timing
+    let stream_start_time = std::time::Instant::now();
     info!("🚀 Starting progressive streaming for AI response window");
     let _ = app_handle.emit("ai-stream-start", ());
 
@@ -418,7 +419,8 @@ async fn pollinations_generate_answer_streaming(
 
     match result {
         Ok(full_response) => {
-            info!("✅ Streaming completed. Full response length: {}", full_response.len());
+            let elapsed_time = stream_start_time.elapsed();
+            info!("✅ Streaming completed. Full response length: {}, elapsed time: {:.2?}", full_response.len(), elapsed_time);
             
             // Emit completion event
             let _ = app_handle.emit("ai-stream-complete", full_response.clone());
@@ -494,7 +496,8 @@ async fn pollinations_generate_answer_post_streaming(
         warn!("Failed to show AI response window: {}", e);
     }
 
-    // Initialize streaming state
+    // Initialize streaming state and timing
+    let stream_start_time = std::time::Instant::now();
     info!("🚀 Starting progressive streaming (POST) for AI response window");
     let _ = app_handle.emit("ai-stream-start", ());
 
@@ -527,7 +530,8 @@ async fn pollinations_generate_answer_post_streaming(
 
     match result {
         Ok(full_response) => {
-            info!("✅ Streaming (POST) completed. Full response length: {}", full_response.len());
+            let elapsed_time = stream_start_time.elapsed();
+            info!("✅ Streaming (POST) completed. Full response length: {}, elapsed time: {:.2?}", full_response.len(), elapsed_time);
             
             // Emit completion event
             let _ = app_handle.emit("ai-stream-complete", full_response.clone());
@@ -964,8 +968,8 @@ fn create_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
         tauri::WebviewUrl::App("ai-response.html".into())
     )
     .title("AI Response")
-    .inner_size(1150.0, 150.0) // Start with minimal height for auto-sizing
-    .min_inner_size(1150.0, 100.0)  // Lower minimum for auto-sizing
+    .inner_size(800.0, 150.0) // Start with minimal height for auto-sizing
+    .min_inner_size(800.0, 100.0)  // Lower minimum for auto-sizing
     // Remove max size constraint to allow dynamic resizing
     .position(response_x as f64, response_y as f64)
     .resizable(true) // Make resizable for programmatic resizing
@@ -1055,7 +1059,7 @@ fn resize_ai_response_window(app_handle: AppHandle, height: u32) -> Result<Strin
             info!("🎯 Attempting resize from {}px to {}px...", current_size.height, clamped_height);
             
             match window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
-                width: 1150,
+                width: 800,
                 height: clamped_height,
             })) {
                 Ok(_) => {
@@ -1130,8 +1134,8 @@ fn create_ai_response_window_at_startup(app_handle: AppHandle) -> Result<String,
         tauri::WebviewUrl::App("ai-response.html".into())
     )
     .title("AI Response")
-    .inner_size(1150.0, 150.0) // Start with minimal height for auto-sizing
-    .min_inner_size(1150.0, 100.0)  // Lower minimum for auto-sizing
+    .inner_size(800.0, 150.0) // Start with minimal height for auto-sizing
+    .min_inner_size(800.0, 100.0)  // Lower minimum for auto-sizing
     // Remove max size constraint to allow dynamic resizing
     .position(response_x as f64, response_y as f64)
     .resizable(true) // Make resizable for programmatic resizing

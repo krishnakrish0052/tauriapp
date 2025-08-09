@@ -372,7 +372,6 @@ class MockMateController {
         const closeBtn = document.getElementById('closeBtn');
         const generateAnswerBtn = document.getElementById('generateAnswerBtn');
         const analyzeScreenBtn = document.getElementById('analyzeScreenBtn');
-        const uploadResumeBtn = document.getElementById('uploadResumeBtn');
         const sendBtn = document.getElementById('sendBtn');
         const questionInput = document.getElementById('questionInput');
 
@@ -385,7 +384,6 @@ class MockMateController {
             clearBtn: !!clearBtn,
             generateAnswerBtn: !!generateAnswerBtn,
             analyzeScreenBtn: !!analyzeScreenBtn,
-            uploadResumeBtn: !!uploadResumeBtn,
             sendBtn: !!sendBtn,
             questionInput: !!questionInput
         });
@@ -436,10 +434,6 @@ class MockMateController {
             await this.analyzeScreen();
         });
 
-        // Upload resume button
-        uploadResumeBtn.addEventListener('click', async () => {
-            await this.uploadResume();
-        });
 
         // Send button and Enter key
         sendBtn.addEventListener('click', async () => {
@@ -825,8 +819,6 @@ class MockMateController {
     async generateAnswer() {
         try {
             const questionInput = document.getElementById('questionInput');
-            const companyInput = document.getElementById('companyInput');
-            const jobDescriptionInput = document.getElementById('jobDescriptionInput');
             
             const question = questionInput.value.trim() || this.fullTranscription || 'Please provide a general interview answer';
             
@@ -850,15 +842,15 @@ class MockMateController {
             
             // Build a system prompt to steer interviewer-style answers
             const systemPrompt = `You are an expert interview assistant. Provide concise, accurate, real-world interview answers. ` +
-                `Use the given company and job description context. Avoid irrelevant details. Use bullet points when helpful.`;
+                `Avoid irrelevant details. Use bullet points when helpful.`;
 
             const payload = {
                 question: question,
                 model: this.selectedModel,
                 provider: this.selectedProvider,
-                company: companyInput.value.trim() || null,
+                company: null,
                 position: null,
-                job_description: jobDescriptionInput.value.trim() || null,
+                job_description: null,
                 system_prompt: systemPrompt
             };
             
@@ -912,19 +904,6 @@ class MockMateController {
         }
     }
 
-    async uploadResume() {
-        try {
-            const result = await safeInvoke('upload_resume');
-            this.showNotification(result, 'info');
-        } catch (error) {
-            console.error('Failed to upload resume:', error);
-            if (error.message && error.message.includes('Tauri not ready')) {
-                this.showNotification('Please wait for app to finish initializing...', 'warning');
-            } else {
-                this.showNotification(`Failed to upload resume: ${error}`, 'error');
-            }
-        }
-    }
 
 
     async sendManualQuestion() {
@@ -953,9 +932,9 @@ class MockMateController {
                 question: question,
                 model: this.selectedModel,
                 provider: this.selectedProvider,
-                company: document.getElementById('companyInput').value.trim() || null,
+                company: null,
                 position: null,
-                job_description: document.getElementById('jobDescriptionInput').value.trim() || null,
+                job_description: null,
                 system_prompt: systemPrompt
             };
             
@@ -1192,16 +1171,21 @@ class MockMateController {
         this.aiResponseWindow = document.createElement('div');
         this.aiResponseWindow.className = 'ai-response-window';
         
-        // Calculate position to keep window 400px from screen bottom
+        // Calculate position to center horizontally and position below main window
+        const screenWidth = window.screen.availWidth || window.screen.width || 1920;
         const screenHeight = window.screen.availHeight || window.screen.height || 1080;
         const maxAllowedHeight = 400; // Maximum height from screen bottom
+        
+        // Center the AI response window horizontally using the same width as main window
+        const responseWindowWidth = mainWindowRect.width;
+        const centeredLeft = Math.max(0, (screenWidth - responseWindowWidth) / 2);
         const windowTop = Math.max(mainWindowRect.bottom + 5, screenHeight - maxAllowedHeight);
         
         this.aiResponseWindow.style.cssText = `
             position: absolute;
             top: ${windowTop}px;
-            left: ${mainWindowRect.left}px;
-            width: ${mainWindowRect.width}px;
+            left: ${centeredLeft}px;
+            width: ${responseWindowWidth}px;
             height: 150px;
             min-height: 100px;
             max-height: ${maxAllowedHeight}px;

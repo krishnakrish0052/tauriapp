@@ -36,7 +36,7 @@
             display: flex;
             justify-content: center;
             align-items: stretch;
-            width: 1150px;
+            width: 800px;
             height: auto;
             min-height: 80px;
             line-height: 1.6;
@@ -340,8 +340,6 @@
 <body>
     <div class="app-container">
         <div class="response-window">
-            <button id="closeBtn" class="utility-btn danger" title="Close Window" style="position: absolute; top: 10px; right: 10px; z-index: 10;"><span class="material-icons">close</span></button>
-            <button id="testResizeBtn" class="utility-btn" title="Test Resize" style="position: absolute; top: 10px; right: 50px; z-index: 10; background: rgba(0, 212, 255, 0.8);"><span class="material-icons">expand_more</span></button>
             <div id="contentArea" class="content-area">Waiting for AI response...</div>
         </div>
     </div>
@@ -376,81 +374,7 @@
             const testResizeBtn = document.getElementById('testResizeBtn');
             const contentArea = document.getElementById('contentArea');
             
-            // Test resize button event listener
-            testResizeBtn.addEventListener('click', async () => {
-                console.log('🧪 Test resize button clicked - Testing markdown formatting!');
-                const contentArea = document.getElementById('contentArea');
-                
-                // Add markdown test content to demonstrate formatting
-                const testMarkdownContent = `# DORA Metrics in DevOps
-
-**Introduction to DORA Metrics:**
-DORA metrics are a set of four key performance indicators (KPIs) that measure the effectiveness of DevOps practices in improving software delivery performance.
-
-## The Four DORA Metrics
-
-### 1. **Lead Time for Changes**
-- **Definition**: The time from code commit to code successfully running in production
-- **What it measures**: How quickly your team can deliver changes to users
-- *High-performing teams*: Less than one day
-- *Low-performing teams*: Between one week and one month
-
-### 2. **Deployment Frequency**
-- **Definition**: How often your team deploys code to production
-- **What it measures**: The pace of software delivery
-- ***High-performing teams***: Multiple deployments per day
-
-### 3. **Mean Time to Recovery (MTTR)**
-Measures your team's ability to restore service quickly.
-
-> "The faster you can recover from failures, the more resilient your system becomes."
-
-### Key Benefits:
-- Data-driven decision making
-- Balanced performance view
-- Cultural transformation
-- Process improvements
-
-For more information, check out [DevOps Research](https://dora.dev) and use \`git\` commands like \`git log\` to analyze your metrics.
-
-\`\`\`bash
-git log --oneline --since="1 month ago"
-git shortlog -sn --since="1 month ago"
-\`\`\`
-
----
-
-**Happy measuring!** 🚀`;
-                
-                // Use the markdown parsing function instead of plain text
-                updateContentWithMarkdown(contentArea, testMarkdownContent, false);
-                
-                console.log('📏 Markdown test content updated, forcing resize...');
-                adjustWindowHeight();
-            });
             
-            // Close button event listener
-            closeBtn.addEventListener('click', async () => {
-                console.log('Close button clicked');
-                try {
-                    if (window.__TAURI__ && window.__TAURI__.invoke) {
-                        console.log('Attempting to close AI response window via Tauri');
-                        await window.__TAURI__.invoke('close_ai_response_window');
-                        console.log('Successfully closed AI response window');
-                    } else {
-                        console.log('Tauri not available, trying window.close()');
-                        window.close();
-                    }
-                } catch (error) {
-                    console.error('Error closing window:', error);
-                    // Fallback: try window.close()
-                    try {
-                        window.close();
-                    } catch (closeError) {
-                        console.error('Error with window.close():', closeError);
-                    }
-                }
-            });
             
             // Wait for Tauri API and then set up observers
             waitForTauri(() => {

@@ -283,6 +283,32 @@ Please provide a comprehensive and professional answer to this interview questio
             if data_content.trim().starts_with("{") {
                 match serde_json::from_str::<Value>(data_content) {
                     Ok(json) => {
+                        // 🔍 LOG COMPLETE API RESPONSE METADATA
+                        info!("🔍 COMPLETE API RESPONSE JSON: {}", serde_json::to_string_pretty(&json).unwrap_or_default());
+                        
+                        // Log specific metadata fields if they exist
+                        if let Some(id) = json.get("id") {
+                            info!("📋 Response ID: {}", id);
+                        }
+                        if let Some(object) = json.get("object") {
+                            info!("📋 Response Object Type: {}", object);
+                        }
+                        if let Some(created) = json.get("created") {
+                            info!("⏰ Response Created Timestamp: {}", created);
+                        }
+                        if let Some(model) = json.get("model") {
+                            info!("🤖 Response Model: {}", model);
+                        }
+                        if let Some(usage) = json.get("usage") {
+                            info!("📊 Token Usage: {}", serde_json::to_string_pretty(&usage).unwrap_or_default());
+                        }
+                        if let Some(system_fingerprint) = json.get("system_fingerprint") {
+                            info!("🔐 System Fingerprint: {}", system_fingerprint);
+                        }
+                        if let Some(finish_reason) = json.get("finish_reason") {
+                            info!("🏁 Finish Reason: {}", finish_reason);
+                        }
+                        
                         // Look for content in OpenAI-compatible structure
                         if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
                             if let Some(first_choice) = choices.first() {
