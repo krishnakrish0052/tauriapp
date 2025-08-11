@@ -242,11 +242,15 @@ pub async fn stop_interview_timer(session_id: String) -> Result<TimerState, Stri
         // Final sync with database (no lock held)
         let _ = timer.sync_credits_if_needed().await;
         
-        // Update session status to completed
+        // Update session status to completed and finalize duration
         let db = DatabaseManager::new().await
             .map_err(|e| format!("Database connection failed: {}", e))?;
-        db.update_session_status(&session_id, "completed").await
-            .map_err(|e| format!("Failed to update session status: {}", e))?;
+        
+        // Update session with final duration and status
+        db.update_session_final_duration(&session_id, final_state.elapsed_minutes as i32).await
+            .map_err(|e| format!("Failed to update session final duration: {}", e))?;
+        
+        info!("✅ Session {} finalized with {} minutes total duration", session_id, final_state.elapsed_minutes);
         
         Ok(final_state)
     } else {

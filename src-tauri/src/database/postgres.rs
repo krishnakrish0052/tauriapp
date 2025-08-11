@@ -4,6 +4,7 @@ use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use log::{info, error, warn};
 use std::str::FromStr;
+use serde::{Serialize, Deserialize};
 
 use super::{DatabaseError, Result};
 use super::models::*;
@@ -402,6 +403,180 @@ impl DatabaseManager {
         info!("Database connection test successful: {}", version);
         Ok(format!("Database connection successful. {}", version))
     }
+
+    // Session data access methods
+    pub async fn get_session_questions(&self, session_id: &str) -> Result<Vec<InterviewQuestion>> {
+        let client = self.pool.get().await
+            .map_err(|e| DatabaseError::ConnectionFailed(e.to_string()))?;
+        
+        let session_uuid = Uuid::from_str(session_id)
+            .map_err(|_| DatabaseError::SessionNotFound("Invalid session ID format".to_string()))?;
+
+        let rows = client
+            .query(
+                r#"
+                SELECT id, session_id, question_number, question_text, category, 
+                       difficulty_level, expected_duration, asked_at, created_at
+                FROM interview_questions
+                WHERE session_id = $1
+                ORDER BY question_number ASC
+                "#,
+                &[&session_uuid]
+            )
+            .await
+            .map_err(|e| {
+                error!("Failed to fetch questions for session {}: {}", session_id, e);
+                DatabaseError::QueryFailed(format!("Failed to fetch questions: {}", e))
+            })?;
+
+        let mut questions = Vec::new();
+        for row in rows {
+            questions.push(InterviewQuestion {
+                id: row.get(0),
+                session_id: row.get(1),
+                question_number: row.get(2),
+                question_text: row.get(3),
+                category: row.get(4),
+                difficulty_level: row.get(5),
+                expected_duration: row.get(6),
+                asked_at: row.get(7),
+                created_at: row.get(8),
+            });
+        }
+
+        Ok(questions)
+    }
+
+    pub async fn get_session_answers(&self, session_id: &str) -> Result<Vec<InterviewAnswer>> {
+        let client = self.pool.get().await
+            .map_err(|e| DatabaseError::ConnectionFailed(e.to_string()))?;
+        
+        let session_uuid = Uuid::from_str(session_id)
+            .map_err(|_| DatabaseError::SessionNotFound("Invalid session ID format".to_string()))?;
+
+        let rows = client
+            .query(
+                r#"
+                SELECT id, question_id, session_id, answer_text, response_time,
+                       ai_feedback, ai_score, answered_at, created_at
+                FROM interview_answers
+                WHERE session_id = $1
+                ORDER BY answered_at ASC
+                "#,
+                &[&session_uuid]
+            )
+            .await
+            .map_err(|e| {
+                error!("Failed to fetch answers for session {}: {}", session_id, e);
+                DatabaseError::QueryFailed(format!("Failed to fetch answers: {}", e))
+            })?;
+
+        let mut answers = Vec::new();
+        for row in rows {
+            answers.push(InterviewAnswer {
+                id: row.get(0),
+                question_id: row.get(1),
+                session_id: row.get(2),
+                answer_text: row.get(3),
+                response_time: row.get(4),
+                ai_feedback: row.get(5),
+                ai_score: row.get(6),
+                answered_at: row.get(7),
+                created_at: row.get(8),
+            });
+        }
+
+        Ok(answers)
+    }
+
+    pub async fn get_session_report(&self, session_id: &str) -> Result<SessionReport> {
+        let session = self.get_session_by_id(session_id).await?;
+        let user = self.get_user_by_id(&session.user_id.to_string()).await?;
+        let questions = self.get_session_questions(session_id).await?;
+        let answers = self.get_session_answers(session_id).await?;
+
+        let total_questions = questions.len() as i32;
+        let total_answers = answers.len() as i32;
+        
+        // Calculate averages before moving the vectors
+        let average_response_time = if answers.is_empty() {
+            0.0
+        } else {
+            let (total_time, count) = answers.iter()
+                .filter_map(|a| a.response_time)
+                .map(|t| t as f64)
+                .fold((0.0, 0), |(sum, count), time| (sum + time, count + 1));
+            if count > 0 { total_time / count as f64 } else { 0.0 }
+        };
+        
+        let average_score = if answers.is_empty() {
+            0.0
+        } else {
+            let (total_score, count) = answers.iter()
+                .filter_map(|a| a.ai_score)
+                .map(|s| s as f64)
+                .fold((0.0, 0), |(sum, count), score| (sum + score, count + 1));
+            if count > 0 { total_score / count as f64 } else { 0.0 }
+        };
+
+        Ok(SessionReport {
+            session,
+            user,
+            questions,
+            answers,
+            total_questions,
+            total_answers,
+            average_response_time,
+            average_score,
+        })
+    }
+
+    pub async fn update_session_final_duration(&self, session_id: &str, total_minutes: i32) -> Result<()> {
+        let client = self.pool.get().await
+            .map_err(|e| DatabaseError::ConnectionFailed(e.to_string()))?;
+        
+        let session_uuid = Uuid::from_str(session_id)
+            .map_err(|_| DatabaseError::SessionNotFound("Invalid session ID format".to_string()))?;
+        
+        let rows_affected = client
+            .execute(
+                r#"
+                UPDATE sessions 
+                SET interview_duration = $1,
+                    status = CASE 
+                        WHEN status = 'active' THEN 'completed'
+                        ELSE status 
+                    END
+                WHERE id = $2
+                "#,
+                &[&total_minutes, &session_uuid]
+            )
+            .await
+            .map_err(|e| {
+                error!("Failed to update session final duration: {}", e);
+                DatabaseError::QueryFailed(format!("Failed to update session final duration: {}", e))
+            })?;
+
+        if rows_affected == 0 {
+            return Err(DatabaseError::SessionNotFound("Session not found for final duration update".to_string()));
+        }
+
+        info!("Updated session {} final duration: {}min and status to completed", session_id, total_minutes);
+        Ok(())
+    }
+}
+
+// Additional data structures for reports
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionReport {
+    pub session: Session,
+    pub user: User,
+    pub questions: Vec<InterviewQuestion>,
+    pub answers: Vec<InterviewAnswer>,
+    pub total_questions: i32,
+    pub total_answers: i32,
+    pub average_response_time: f64,
+    pub average_score: f64,
 }
 
 // Tauri commands for database operations
@@ -438,4 +613,123 @@ pub async fn get_db_session_info(session_id: String) -> std::result::Result<Sess
         credits_available: user.credits,
         status: session.status,
     })
+}
+
+#[tauri::command]
+pub async fn save_interview_question(
+    session_id: String,
+    question_number: i32,
+    question_text: String,
+    category: String,
+    difficulty_level: String,
+    expected_duration: i32
+) -> std::result::Result<String, String> {
+    info!("💾 Saving interview question {} for session {}", question_number, session_id);
+    
+    let db = DatabaseManager::new().await
+        .map_err(|e| e.to_string())?;
+    
+    let question_id = db.insert_interview_question(
+        &session_id,
+        question_number,
+        &question_text,
+        &category,
+        &difficulty_level,
+        expected_duration
+    ).await
+        .map_err(|e| e.to_string())?;
+    
+    info!("✅ Question saved with ID: {}", question_id);
+    Ok(question_id.to_string())
+}
+
+#[tauri::command]
+pub async fn save_interview_answer(
+    session_id: String,
+    question_id: String,
+    answer_text: String,
+    response_time: i32,
+    ai_feedback: Option<String>,
+    ai_score: Option<i32>
+) -> std::result::Result<String, String> {
+    info!("💾 Saving interview answer for question {} in session {}", question_id, session_id);
+    
+    let db = DatabaseManager::new().await
+        .map_err(|e| e.to_string())?;
+    
+    let question_uuid = Uuid::from_str(&question_id)
+        .map_err(|_| "Invalid question ID format".to_string())?;
+    
+    let answer_id = db.insert_interview_answer(
+        &question_uuid,
+        &session_id,
+        Some(&answer_text),
+        Some(response_time),
+        ai_feedback.as_deref(),
+        ai_score
+    ).await
+        .map_err(|e| e.to_string())?;
+    
+    info!("✅ Answer saved with ID: {}", answer_id);
+    Ok(answer_id.to_string())
+}
+
+#[tauri::command]
+pub async fn get_session_questions(session_id: String) -> std::result::Result<Vec<InterviewQuestion>, String> {
+    info!("📋 Retrieving questions for session: {}", session_id);
+    
+    let db = DatabaseManager::new().await
+        .map_err(|e| e.to_string())?;
+    
+    let questions = db.get_session_questions(&session_id).await
+        .map_err(|e| e.to_string())?;
+    
+    info!("✅ Retrieved {} questions", questions.len());
+    Ok(questions)
+}
+
+#[tauri::command]
+pub async fn get_session_answers(session_id: String) -> std::result::Result<Vec<InterviewAnswer>, String> {
+    info!("📝 Retrieving answers for session: {}", session_id);
+    
+    let db = DatabaseManager::new().await
+        .map_err(|e| e.to_string())?;
+    
+    let answers = db.get_session_answers(&session_id).await
+        .map_err(|e| e.to_string())?;
+    
+    info!("✅ Retrieved {} answers", answers.len());
+    Ok(answers)
+}
+
+#[tauri::command]
+pub async fn get_interview_report(session_id: String) -> std::result::Result<SessionReport, String> {
+    info!("📊 Generating interview report for session: {}", session_id);
+    
+    let db = DatabaseManager::new().await
+        .map_err(|e| e.to_string())?;
+    
+    let report = db.get_session_report(&session_id).await
+        .map_err(|e| e.to_string())?;
+    
+    info!("✅ Generated report with {} questions, {} answers, avg score: {:.1}", 
+          report.total_questions, report.total_answers, report.average_score);
+    Ok(report)
+}
+
+#[tauri::command]
+pub async fn finalize_session_duration(
+    session_id: String, 
+    total_minutes: i32
+) -> std::result::Result<String, String> {
+    info!("🏁 Finalizing session {} with duration: {} minutes", session_id, total_minutes);
+    
+    let db = DatabaseManager::new().await
+        .map_err(|e| e.to_string())?;
+    
+    db.update_session_final_duration(&session_id, total_minutes).await
+        .map_err(|e| e.to_string())?;
+    
+    info!("✅ Session duration finalized");
+    Ok("Session duration finalized successfully".to_string())
 }

@@ -85,6 +85,15 @@ pub fn run() -> Result<()> {
             disconnect_session,
             // Timer management
             update_session_timer,
+            // Database operations
+            database::postgres::test_database_connection,
+            database::postgres::get_db_session_info,
+            database::postgres::save_interview_question,
+            database::postgres::save_interview_answer,
+            database::postgres::get_session_questions,
+            database::postgres::get_session_answers,
+            database::postgres::get_interview_report,
+            database::postgres::finalize_session_duration,
             // Window management
             resize_main_window
         ])
