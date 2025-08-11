@@ -89,6 +89,37 @@
         
         .brand { display: flex; align-items: center; gap: 12px; }
         
+        /* Session Timer */
+        .session-timer {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            background: rgba(255, 71, 87, 0.15);
+            border: 1px solid rgba(255, 71, 87, 0.3);
+            border-radius: 8px;
+            color: var(--danger);
+            font-weight: bold;
+            font-size: 14px;
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+            letter-spacing: 0.5px;
+            animation: timerPulse 2s infinite;
+        }
+        
+        .session-timer.active {
+            display: flex;
+        }
+        
+        .session-timer .timer-icon {
+            font-size: 16px;
+            animation: blink 1s infinite;
+        }
+        
+        @keyframes timerPulse {
+            0%, 100% { box-shadow: 0 0 5px rgba(255, 71, 87, 0.3); }
+            50% { box-shadow: 0 0 15px rgba(255, 71, 87, 0.6); }
+        }
+        
         .logo {
             width: 32px; height: 32px;
             background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
@@ -119,6 +150,40 @@
         .control-item { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); transition: color 0.2s ease; }
         .control-item:hover { color: var(--text-primary); }
         .control-icon { display: flex; align-items: center; justify-content: center; color: var(--accent); }
+        
+        /* Session Management */
+        .session-info {
+            background: rgba(0, 212, 255, 0.1);
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            border-radius: 6px;
+            padding: 4px 8px;
+            font-size: 11px;
+            color: var(--accent);
+            display: none;
+            align-items: center;
+            gap: 6px;
+            animation: slideInFromBottom 0.3s ease;
+        }
+        
+        .session-info.active {
+            display: flex;
+        }
+        
+        .session-status {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--success);
+            animation: pulse 2s infinite;
+        }
+        
+        .session-credits {
+            background: rgba(255, 107, 53, 0.1);
+            color: var(--accent-secondary);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 500;
+        }
         
         .recording-indicator {
             width: 8px; height: 8px; background: var(--danger);
@@ -358,28 +423,247 @@
             box-shadow: 0 0 4px rgba(0, 212, 255, 0.2);
         }
 
+        /* Session Connection Container */
+        .session-connection-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.60);
+            border-radius: 16px;
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            position: relative;
+            padding: 16px;
+        }
+        
+        .session-connection-container::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: var(--gradient-primary);
+            opacity: 0.3;
+            pointer-events: none;
+            border-radius: inherit;
+        }
+        
+        .session-connection-panel {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+            width: 100%;
+            max-width: none;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            position: relative;
+            z-index: 10;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+        
+        .session-connection-header {
+            text-align: center;
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+        }
+        
+        .session-icon {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 24px;
+            box-shadow: 0 4px 16px rgba(0, 212, 255, 0.3);
+        }
+        
+        .session-connection-header h3 {
+            margin: 0;
+            color: var(--text-primary);
+            font-size: 18px;
+            font-weight: 600;
+        }
+        
+        .session-connection-header p {
+            margin: 0;
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+        
+        .session-connection-form {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+        
+        .input-group {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .session-input {
+            width: 100%;
+            padding: 12px 16px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 14px;
+            transition: all 0.2s ease;
+        }
+        
+        .session-input:focus {
+            outline: none;
+            background: rgba(255, 255, 255, 0.08);
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.15);
+        }
+        
+        .session-input::placeholder {
+            color: var(--text-muted);
+        }
+        
+        .session-btn {
+            background: rgba(0, 0, 0, 0.8);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 14px;
+            font-weight: 500;
+            padding: 12px 20px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        
+        .session-btn:hover {
+            background: rgba(0, 0, 0, 0.9);
+            border-color: var(--border-active);
+            transform: translateY(-1px);
+        }
+        
+        .connect-btn {
+            background: linear-gradient(135deg, var(--accent), rgba(0, 212, 255, 0.8));
+            border-color: transparent;
+            color: white;
+        }
+        
+        .connect-btn:hover {
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.9), var(--accent));
+            box-shadow: 0 4px 16px rgba(0, 212, 255, 0.3);
+        }
+        
+        .disconnect-btn {
+            background: rgba(255, 71, 87, 0.1);
+            border-color: rgba(255, 71, 87, 0.3);
+            color: var(--danger);
+        }
+        
+        .disconnect-btn:hover {
+            background: rgba(255, 71, 87, 0.2);
+            border-color: var(--danger);
+        }
+        
+        .session-help {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: var(--text-muted);
+            text-align: center;
+            justify-content: center;
+        }
+        
+        .session-help .material-icons {
+            font-size: 16px;
+        }
+
         @media (max-width: 768px) {
             .header { justify-content: center; }
             .brand { width: 100%; justify-content: center; margin-bottom: 16px; }
             .input-section { flex-direction: column; align-items: stretch; gap: 12px; }
             .controls-bar { justify-content: center; }
             .action-buttons { flex-wrap: wrap; justify-content: center; }
+            
+            .session-connection-panel {
+                min-width: 320px;
+                max-width: 90%;
+                padding: 20px;
+            }
+            
+            .session-connection-form {
+                flex-direction: column;
+                gap: 16px;
+            }
+            
+            .input-group {
+                flex: none;
+            }
         }
     </style>
 </head>
 <body>
     <div class="app-container">
+        <!-- Session Connection Container -->
+        <div class="session-connection-container" id="sessionConnectionContainer">
+            <div class="session-connection-panel" id="sessionConnectionPanel">
+                <div class="session-connection-header">
+                    <div class="session-icon">
+                        <span class="material-icons">link</span>
+                    </div>
+                    <h3>Connect to Session</h3>
+                </div>
+                
+                <div class="session-connection-form">
+                    <div class="input-group">
+                        <input type="text" id="sessionIdInput" class="session-input" 
+                               placeholder="Session URL or ID (e.g., mockmate://session/...)">
+                    </div>
+                    
+                    <button id="connectBtn" class="session-btn connect-btn">
+                        <span class="material-icons">link</span>
+                        <span>Connect</span>
+                    </button>
+                </div>
+                
+                <div class="session-help">
+                    <span class="material-icons">info</span>
+                    <span>Get your session link from the MockMate web app</span>
+                </div>
+            </div>
+        </div>
+        
         <div class="main-window">
             <div class="header">
                 <div class="brand">
+                    <div class="session-timer" id="sessionTimer">
+                        <span class="material-icons timer-icon">access_time</span>
+                        <span id="timerDisplay">00:00</span>
+                    </div>
                     <div class="logo"><span class="material-icons" style="font-size: 20px;">psychology</span></div>
                     <h2>MockMate AI</h2>
                     <div class="status-pill">Live</div>
                 </div>
                 <div class="controls-bar">
-                    <div class="control-item">
-                        <span class="material-icons control-icon">smart_toy</span>
-                        <div class="provider-switch"></div>
+                    <div class="session-info" id="sessionInfo">
+                        <div class="session-status"></div>
+                        <span id="sessionTitle">Session Connected</span>
+                        <div class="session-credits" id="sessionCredits">5 credits</div>
                     </div>
                     <div class="control-item custom-select-wrapper">
                         <div class="custom-select" id="customSelect">
@@ -423,6 +707,8 @@
             console.log('⚠️ Tauri API not found on window');
         }
     </script>
+    <script src="session-flow.js"></script>
+    <!-- <script src="session-connection.js"></script> Disabled - conflicts with session-flow.js -->
     <script src="main.js"></script>
 </body>
 </html>

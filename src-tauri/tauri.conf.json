@@ -39,6 +39,26 @@
       "iconAsTemplate": true
     }
   },
+  "plugins": {
+    "fs": {
+      "scope": [
+        "$APPDATA/*",
+        "$TEMP/*"
+      ]
+    },
+    "shell": {
+      "scope": [
+        {
+          "name": "open-browser",
+          "cmd": "cmd",
+          "args": ["/C", "start", { "validator": "https?://.*" }]
+        }
+      ]
+    },
+    "deepLink": {
+      "schemes": ["mockmate"]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
@@ -57,23 +77,6 @@
       "nsis": {
         "displayLanguageSelector": false
       }
-    }
-  },
-  "plugins": {
-    "fs": {
-      "scope": [
-        "$APPDATA/*",
-        "$TEMP/*"
-      ]
-    },
-    "shell": {
-      "scope": [
-        {
-          "name": "open-browser",
-          "cmd": "cmd",
-          "args": ["/C", "start", { "validator": "https?://.*" }]
-        }
-      ]
     }
   }
 }

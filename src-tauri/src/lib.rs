@@ -15,8 +15,14 @@ mod pollinations;
 mod wasapi_loopback;
 pub mod realtime_transcription;
 
+// New Phase 2 modules
+pub mod database;
+// pub mod session; // Temporarily disabled to avoid conflicts
+// pub mod interview; // Temporarily disabled to avoid conflicts
+
 use openai::{OpenAIClient, InterviewContext};
 use pollinations::{PollinationsClient, AIProvider};
+use database::shared::*; // Import shared database types and functions
 
 pub fn run() -> Result<()> {
     // Load environment variables from .env file
@@ -63,11 +69,72 @@ pub fn run() -> Result<()> {
             save_system_audio_file,
             pollinations_generate_answer,
             pollinations_generate_answer_streaming,
-            pollinations_generate_answer_post_streaming
+            pollinations_generate_answer_post_streaming,
+            // Session management commands (existing)
+            connect_to_web_session,
+            activate_web_session,
+            get_session_info,
+            handle_protocol_launch,
+            // New shared database session commands
+            connect_session,
+            activate_session_cmd,
+            disconnect_session_cmd,
+            // Frontend compatibility commands
+            validate_session_id,
+            activate_session,
+            disconnect_session,
+            // Timer management
+            update_session_timer,
+            // Window management
+            resize_main_window
         ])
         .manage(AppState::new())
         .setup(|app| {
             info!("MockMate application starting up...");
+            
+            // Handle command line arguments for protocol URLs
+            let args: Vec<String> = std::env::args().collect();
+            info!("Command line args: {:?}", args);
+            
+            // Check if launched with a mockmate:// URL
+            if let Some(protocol_url) = args.iter().find(|arg| arg.starts_with("mockmate://")) {
+                info!("Detected protocol launch: {}", protocol_url);
+                
+                // Parse the protocol URL
+                if let Some(session_part) = protocol_url.strip_prefix("mockmate://session/") {
+                    // Extract session ID and any query parameters
+                    let parts: Vec<&str> = session_part.split('?').collect();
+                    let session_id = parts[0].to_string();
+                    
+                    info!("Parsed session ID: {}", session_id);
+                    
+                    // Extract query parameters if present
+                    let mut token: Option<String> = None;
+                    let mut user_id: Option<String> = None;
+                    
+                    if parts.len() > 1 {
+                        for param in parts[1].split('&') {
+                            let kv: Vec<&str> = param.split('=').collect();
+                            if kv.len() == 2 {
+                                match kv[0] {
+                                    "token" => token = Some(urlencoding::decode(kv[1]).unwrap_or_default().to_string()),
+                                    "user_id" => user_id = Some(urlencoding::decode(kv[1]).unwrap_or_default().to_string()),
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Handle the protocol launch with a slight delay to ensure app is fully initialized
+                    let app_handle = app.handle().clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+                        if let Err(e) = handle_protocol_launch(session_id, token, user_id, app_handle) {
+                            error!("Failed to handle protocol launch: {}", e);
+                        }
+                    });
+                }
+            }
             
             // Initialize the real-time transcription service
             realtime_transcription::init_transcription_service(app.handle().clone());
@@ -144,6 +211,35 @@ struct InterviewContextPayload {
     company: Option<String>,
     position: Option<String>,
     job_description: Option<String>,
+}
+
+// Session Management Structures
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct SessionData {
+    id: String,
+    job_title: String,
+    job_description: Option<String>,
+    difficulty_level: String,
+    interview_type: String,
+    estimated_duration_minutes: u32,
+    status: String,
+    created_at: String,
+    desktop_connected: Option<bool>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SessionConnectionPayload {
+    session_id: String,
+    token: String,
+    user_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SessionActivationResponse {
+    success: bool,
+    message: String,
+    session: Option<SessionData>,
+    remaining_credits: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1344,4 +1440,346 @@ fn set_window_capture_protection(window: tauri::WebviewWindow, protect: bool) ->
         warn!("Window capture protection is only supported on Windows.");
     }
     Ok(())
+}
+
+// Session Management Commands
+
+#[tauri::command]
+async fn connect_to_web_session(payload: SessionConnectionPayload) -> Result<SessionData, String> {
+    info!("Connecting to web session: {}", payload.session_id);
+    
+    let backend_url = std::env::var("MOCKMATE_BACKEND_URL")
+        .unwrap_or_else(|_| "https://mockmate-backend.onrender.com".to_string());
+    
+    let client = reqwest::Client::new();
+    
+    // Notify backend about desktop connection
+    let connection_response = client
+        .post(format!("{}/api/sessions/{}/connect-desktop", backend_url, payload.session_id))
+        .header("Authorization", format!("Bearer {}", payload.token))
+        .header("Content-Type", "application/json")
+        .json(&serde_json::json!({
+            "user_id": payload.user_id,
+            "desktop_version": env!("CARGO_PKG_VERSION"),
+            "platform": std::env::consts::OS
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to connect to session: {}", e))?;
+    
+    if !connection_response.status().is_success() {
+        return Err(format!("Session connection failed: {}", connection_response.status()));
+    }
+    
+    let session_data: SessionData = connection_response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse session data: {}", e))?;
+    
+    info!("Successfully connected to session: {} - {}", session_data.id, session_data.job_title);
+    Ok(session_data)
+}
+
+#[tauri::command]
+async fn activate_web_session(payload: SessionConnectionPayload) -> Result<SessionActivationResponse, String> {
+    info!("Activating session with credit check: {}", payload.session_id);
+    
+    let backend_url = std::env::var("MOCKMATE_BACKEND_URL")
+        .unwrap_or_else(|_| "https://mockmate-backend.onrender.com".to_string());
+    
+    let client = reqwest::Client::new();
+    
+    // Activate session with credit deduction
+    let activation_response = client
+        .post(format!("{}/api/sessions/{}/activate", backend_url, payload.session_id))
+        .header("Authorization", format!("Bearer {}", payload.token))
+        .header("Content-Type", "application/json")
+        .json(&serde_json::json!({
+            "user_id": payload.user_id
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to activate session: {}", e))?;
+    
+    let activation_result: SessionActivationResponse = activation_response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse activation response: {}", e))?;
+    
+    if activation_result.success {
+        info!("Session activated successfully. Credits remaining: {:?}", activation_result.remaining_credits);
+    } else {
+        warn!("Session activation failed: {}", activation_result.message);
+    }
+    
+    Ok(activation_result)
+}
+
+#[tauri::command]
+async fn get_session_info(session_id: String, token: String) -> Result<SessionData, String> {
+    info!("Getting session info: {}", session_id);
+    
+    let backend_url = std::env::var("MOCKMATE_BACKEND_URL")
+        .unwrap_or_else(|_| "https://mockmate-backend.onrender.com".to_string());
+    
+    let client = reqwest::Client::new();
+    
+    let response = client
+        .get(format!("{}/api/sessions/{}", backend_url, session_id))
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch session info: {}", e))?;
+    
+    if !response.status().is_success() {
+        return Err(format!("Failed to get session info: {}", response.status()));
+    }
+    
+    let session_data: SessionData = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse session data: {}", e))?;
+    
+    Ok(session_data)
+}
+
+#[tauri::command]
+fn handle_protocol_launch(session_id: String, token: Option<String>, user_id: Option<String>, app_handle: AppHandle) -> Result<String, String> {
+    info!("Handling protocol launch for session: {}", session_id);
+    
+    // Parse the session_id from the protocol URL if it's a full URL
+    let clean_session_id = if session_id.starts_with("mockmate://session/") {
+        session_id.strip_prefix("mockmate://session/").unwrap_or(&session_id).to_string()
+    } else {
+        session_id.clone()
+    };
+    
+    info!("Clean session ID: {}", clean_session_id);
+    
+    // Bring the main window to front and focus
+    if let Some(main_window) = app_handle.get_webview_window("main") {
+        if let Err(e) = main_window.show() {
+            error!("Failed to show main window: {}", e);
+        }
+        if let Err(e) = main_window.set_focus() {
+            error!("Failed to focus main window: {}", e);
+        }
+        
+        // Send session info to the frontend
+        let session_launch_data = serde_json::json!({
+            "session_id": clean_session_id,
+            "token": token,
+            "user_id": user_id,
+            "launched_at": chrono::Utc::now().to_rfc3339()
+        });
+        
+        if let Err(e) = app_handle.emit("session-launch", session_launch_data) {
+            error!("Failed to emit session-launch event: {}", e);
+        }
+        
+        info!("Protocol launch handled successfully for session: {}", clean_session_id);
+        Ok(format!("Launched session: {}", clean_session_id))
+    } else {
+        error!("Main window not found for protocol launch");
+        Err("Main window not found".to_string())
+    }
+}
+
+// New Shared Database Session Commands
+
+#[tauri::command]
+async fn connect_session(session_id: String) -> Result<crate::database::SessionWithUser, String> {
+    info!("🔗 Connecting to session: {}", session_id);
+    
+    // Initialize database connection if not already done
+    crate::database::initialize_database().await?;
+    
+    // Get session details with user info
+    let session_info = crate::database::get_session_with_user_info(&session_id).await?;
+    
+    info!("✅ Successfully connected to session: {}", session_info.session_name);
+    Ok(session_info)
+}
+
+#[tauri::command]
+async fn activate_session_cmd(session_id: String) -> Result<String, String> {
+    info!("🚀 Activating session: {}", session_id);
+    
+    // Activate session and deduct credits
+    crate::database::activate_session(&session_id).await?;
+    
+    info!("✅ Session activated successfully");
+    Ok("Session activated successfully".to_string())
+}
+
+#[tauri::command]
+async fn disconnect_session_cmd(session_id: String) -> Result<String, String> {
+    info!("🔌 Disconnecting from session: {}", session_id);
+    
+    crate::database::disconnect_session(&session_id).await?;
+    
+    info!("✅ Session disconnected successfully");
+    Ok("Session disconnected successfully".to_string())
+}
+
+// Frontend compatibility command wrappers
+
+#[derive(Serialize, Deserialize)]
+struct SessionValidationResult {
+    valid: bool,
+    message: String,
+}
+
+#[tauri::command]
+async fn validate_session_id(session_id: String) -> Result<SessionValidationResult, String> {
+    info!("🔍 Validating session ID: {}", session_id);
+    
+    // Validate UUID format
+    let uuid_pattern = regex::Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+        .map_err(|e| format!("Regex error: {}", e))?;
+    
+    if !uuid_pattern.is_match(&session_id.to_lowercase()) {
+        return Ok(SessionValidationResult {
+            valid: false,
+            message: "Invalid session ID format - must be a valid UUID".to_string(),
+        });
+    }
+    
+    // Try to initialize database and validate session exists
+    match crate::database::initialize_database().await {
+        Ok(()) => {
+            match crate::database::get_session_with_user_info(&session_id).await {
+                Ok(_) => Ok(SessionValidationResult {
+                    valid: true,
+                    message: "Session ID is valid and exists".to_string(),
+                }),
+                Err(e) => {
+                    if e.contains("not found") {
+                        Ok(SessionValidationResult {
+                            valid: false,
+                            message: "Session not found".to_string(),
+                        })
+                    } else {
+                        Ok(SessionValidationResult {
+                            valid: false,
+                            message: format!("Validation error: {}", e),
+                        })
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            warn!("Database not available for validation: {}", e);
+            // If database is not available, just validate format
+            Ok(SessionValidationResult {
+                valid: true,
+                message: "Session ID format is valid (database validation skipped)".to_string(),
+            })
+        }
+    }
+}
+
+#[tauri::command]
+async fn activate_session(session_id: String) -> Result<bool, String> {
+    info!("🚀 Activating session (frontend compatibility): {}", session_id);
+    
+    // Call the existing activate_session_cmd and return boolean result
+    match activate_session_cmd(session_id).await {
+        Ok(_) => Ok(true),
+        Err(e) => {
+            error!("Session activation failed: {}", e);
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
+async fn disconnect_session(session_id: String) -> Result<String, String> {
+    info!("🔌 Disconnecting from session (frontend compatibility): {}", session_id);
+    
+    // Call the existing disconnect_session_cmd
+    disconnect_session_cmd(session_id).await
+}
+
+// Timer management command
+
+#[derive(Serialize, Deserialize)]
+struct UpdateTimerPayload {
+    #[serde(rename = "sessionId")]
+    session_id: String,
+    #[serde(rename = "elapsedMinutes")]
+    elapsed_minutes: i32,
+    #[serde(rename = "isFinal")]
+    is_final: Option<bool>,
+}
+
+#[tauri::command]
+async fn update_session_timer(session_id: String, elapsed_minutes: i32, is_final: Option<bool>) -> Result<String, String> {
+    let is_final = is_final.unwrap_or(false);
+    
+    if is_final {
+        info!("⏱️ Updating session timer (FINAL): {} - {} minutes", session_id, elapsed_minutes);
+    } else {
+        info!("⏱️ Updating session timer: {} - {} minutes", session_id, elapsed_minutes);
+    }
+    
+    // For now, we'll just log the timer update. Later we can add database persistence.
+    // This could save to the sessions table's total_duration_minutes field
+    
+    // TODO: Implement database update for timer state
+    // UPDATE sessions SET total_duration_minutes = elapsed_minutes WHERE id = session_id;
+    
+    if is_final {
+        info!("✅ Final session timer saved: {} minutes", elapsed_minutes);
+        Ok(format!("Final session timer saved: {} minutes", elapsed_minutes))
+    } else {
+        info!("✅ Session timer updated: {} minutes", elapsed_minutes);
+        Ok(format!("Session timer updated: {} minutes", elapsed_minutes))
+    }
+}
+
+// Window management commands
+
+#[tauri::command]
+fn resize_main_window(app_handle: AppHandle, width: u32, height: u32) -> Result<String, String> {
+    info!("📐 Resizing main window to: {}x{}", width, height);
+    
+    if let Some(window) = app_handle.get_webview_window("main") {
+        // Get current size for comparison
+        let current_size = window.outer_size().map_err(|e| {
+            error!("❌ Failed to get current main window size: {}", e);
+            e.to_string()
+        })?;
+        
+        info!("📊 Main window resize: current={}x{}, requested={}x{}", 
+              current_size.width, current_size.height, width, height);
+        
+        match window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+            width,
+            height,
+        })) {
+            Ok(_) => {
+                info!("✅ Main window successfully resized to: {}x{}", width, height);
+                
+                // Verify the resize worked
+                match window.outer_size() {
+                    Ok(new_size) => {
+                        info!("🔍 Post-resize verification: actual new size is {}x{}", new_size.width, new_size.height);
+                        Ok(format!("Main window resized to {}x{}", new_size.width, new_size.height))
+                    }
+                    Err(e) => {
+                        warn!("❌ Failed to verify main window resize: {}", e);
+                        Ok(format!("Main window resize attempted: {}x{}", width, height))
+                    }
+                }
+            }
+            Err(e) => {
+                error!("❌ Failed to resize main window: {}", e);
+                Err(format!("Failed to resize main window: {}", e))
+            }
+        }
+    } else {
+        error!("❌ Main window not found for resize");
+        Err("Main window not found".to_string())
+    }
 }

@@ -108,7 +108,7 @@ class MockMateController {
         this.fullTranscription = '';  // Cumulative transcription text
         this.interimTranscription = ''; // Current interim text
         this.selectedModel = 'llama-3.1-70b-instruct';
-        this.selectedProvider = 'openai';
+        this.selectedProvider = 'pollinations';
         this.aiResponseWindow = null;
         this.models = [];
         this.providers = [];
@@ -118,6 +118,12 @@ class MockMateController {
         this.heightAdjustmentTimeout = null; // Throttling for height adjustments
         this.aiWindowResizeObserver = null; // ResizeObserver for AI content
         this.aiWindowSizePoll = null; // Fallback polling handle
+        // Session management
+        this.currentSession = null;
+        this.sessionToken = null;
+        this.userId = null;
+        this.isSessionActive = false;
+        this.sessionCredits = 0;
         this.init();
     }
 
@@ -128,8 +134,7 @@ class MockMateController {
             console.log('📊 Loading AI providers and models...');
             await this.loadAIProvidersAndModels();
             
-            console.log('⚙️ Setting up provider switch...');
-            await this.setupProviderSwitch();
+            // Provider switch removed - using Pollinations only
             
             console.log('📋 Setting up custom select...');
             await this.setupCustomSelect();
@@ -139,6 +144,9 @@ class MockMateController {
             
             console.log('📡 Setting up Tauri event listeners...');
             await this.setupTauriEventListeners();
+            
+            console.log('🎯 Setting up session management...');
+            await this.setupSessionManagement();
             
             console.log('📝 Updating transcription state...');
             await this.updateTranscriptionState();
@@ -574,9 +582,158 @@ class MockMateController {
                 this.showNotification(`AI streaming error: ${error}`, 'error');
             });
 
-            console.log('✅ Event listeners setup successfully (including AI streaming)');
+        console.log('✅ Event listeners setup successfully (including AI streaming)');
         } catch (error) {
             console.error('Failed to setup event listeners:', error);
+        }
+    }
+
+    async setupSessionManagement() {
+        try {
+            console.log('🎯 Setting up session management...');
+            
+            // Listen for session launch events (protocol handler)
+            await listen('session-launch', (event) => {
+                console.log('🚀 Session launch event received:', event.payload);
+                this.handleSessionLaunch(event.payload);
+            });
+            
+            // Check if there's session data in the URL or arguments on startup
+            this.checkForSessionData();
+            
+            console.log('✅ Session management setup complete');
+        } catch (error) {
+            console.error('Failed to setup session management:', error);
+        }
+    }
+
+    checkForSessionData() {
+        // Check URL for session parameters (for development/testing)
+        const urlParams = new URLSearchParams(window.location.search);
+        const sessionId = urlParams.get('session');
+        const token = urlParams.get('token');
+        const userId = urlParams.get('user_id');
+        
+        if (sessionId && token && userId) {
+            console.log('📋 Found session data in URL:', { sessionId, userId });
+            this.handleSessionLaunch({ session_id: sessionId, token, user_id: userId });
+        }
+    }
+
+    async handleSessionLaunch(data) {
+        try {
+            console.log('🎯 Handling session launch with data:', data);
+            
+            const { session_id, token, user_id } = data;
+            if (!session_id || !token || !user_id) {
+                console.error('❌ Missing required session data:', { session_id: !!session_id, token: !!token, user_id: !!user_id });
+                this.showNotification('Invalid session data received', 'error');
+                return;
+            }
+            
+            // Store session credentials
+            this.sessionToken = token;
+            this.userId = user_id;
+            
+            // Connect to the session
+            await this.connectToSession(session_id);
+            
+        } catch (error) {
+            console.error('❌ Failed to handle session launch:', error);
+            this.showNotification(`Session launch failed: ${error.message}`, 'error');
+        }
+    }
+
+    async connectToSession(sessionId) {
+        try {
+            console.log('🔗 Connecting to session:', sessionId);
+            this.showNotification('Connecting to session...', 'info');
+            
+            const connectionPayload = {
+                session_id: sessionId,
+                token: this.sessionToken,
+                user_id: this.userId
+            };
+            
+            // Connect to the web session
+            const sessionData = await safeInvoke('connect_to_web_session', connectionPayload);
+            console.log('✅ Connected to session:', sessionData);
+            
+            this.currentSession = sessionData;
+            this.isSessionActive = true;
+            
+            // Show session info in UI
+            this.updateSessionUI();
+            
+            // Activate the session with credit check
+            await this.activateSession();
+            
+        } catch (error) {
+            console.error('❌ Failed to connect to session:', error);
+            this.showNotification(`Failed to connect to session: ${error.message}`, 'error');
+        }
+    }
+
+    async activateSession() {
+        try {
+            console.log('⚡ Activating session with credit check...');
+            
+            const activationPayload = {
+                session_id: this.currentSession.id,
+                token: this.sessionToken,
+                user_id: this.userId
+            };
+            
+            const activationResult = await safeInvoke('activate_session', activationPayload);
+            console.log('⚡ Session activation result:', activationResult);
+            
+            if (activationResult.success) {
+                this.sessionCredits = activationResult.remaining_credits || 0;
+                this.showNotification(`Session activated! ${this.sessionCredits} credits remaining`, 'success');
+            } else {
+                this.showNotification(`Session activation failed: ${activationResult.message}`, 'error');
+                this.isSessionActive = false;
+            }
+            
+            // Update UI with credits info
+            this.updateSessionUI();
+            
+        } catch (error) {
+            console.error('❌ Failed to activate session:', error);
+            this.showNotification(`Session activation failed: ${error.message}`, 'error');
+            this.isSessionActive = false;
+        }
+    }
+
+    updateSessionUI() {
+        const sessionInfo = document.getElementById('sessionInfo');
+        const sessionTitle = document.getElementById('sessionTitle');
+        const sessionCredits = document.getElementById('sessionCredits');
+        
+        if (this.currentSession && this.isSessionActive) {
+            // Show session info
+            sessionInfo.classList.add('active');
+            sessionTitle.textContent = this.currentSession.job_title || 'Session Connected';
+            sessionCredits.textContent = `${this.sessionCredits} credits`;
+            
+            // Update status pill to show session status
+            const statusPill = document.querySelector('.status-pill');
+            if (statusPill) {
+                statusPill.textContent = 'Session Active';
+                statusPill.style.background = 'rgba(0, 212, 255, 0.15)';
+                statusPill.style.color = 'var(--accent)';
+                statusPill.style.borderColor = 'rgba(0, 212, 255, 0.2)';
+                statusPill.style.display = 'block';
+            }
+            
+            console.log('✅ Session UI updated:', {
+                jobTitle: this.currentSession.job_title,
+                credits: this.sessionCredits,
+                active: this.isSessionActive
+            });
+        } else {
+            // Hide session info
+            sessionInfo.classList.remove('active');
         }
     }
 
