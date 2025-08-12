@@ -59,7 +59,7 @@ impl DatabaseManager {
                 r#"
                 SELECT id, user_id, job_title, job_description, difficulty, 
                        session_type, status, resume_content, created_at, 
-                       desktop_connected_at, interview_duration, credits_used
+                       desktop_connected_at, session_started_at, interview_duration, credits_used
                 FROM sessions 
                 WHERE id = $1
                 "#,
@@ -82,8 +82,9 @@ impl DatabaseManager {
             resume_content: row.get(7),
             created_at: row.get(8),
             desktop_connected_at: row.get(9),
-            interview_duration: row.get(10),
-            credits_used: row.get(11),
+            session_started_at: row.get(10),
+            interview_duration: row.get(11),
+            credits_used: row.get(12),
         })
     }
 
@@ -133,10 +134,15 @@ impl DatabaseManager {
             .execute(
                 r#"
                 UPDATE sessions 
-                SET status = $1, desktop_connected_at = CASE 
-                    WHEN $1 = 'active' AND desktop_connected_at IS NULL THEN $2
-                    ELSE desktop_connected_at 
-                END
+                SET status = $1, 
+                    desktop_connected_at = CASE 
+                        WHEN $1 = 'active' AND desktop_connected_at IS NULL THEN $2
+                        ELSE desktop_connected_at 
+                    END,
+                    session_started_at = CASE 
+                        WHEN $1 = 'active' AND session_started_at IS NULL THEN $2
+                        ELSE session_started_at 
+                    END
                 WHERE id = $3
                 "#,
                 &[&status, &now, &session_uuid]
@@ -387,6 +393,39 @@ impl DatabaseManager {
         }
 
         info!("Session {} heartbeat updated", session_id);
+        Ok(())
+    }
+
+    pub async fn mark_session_started(&self, session_id: &str) -> Result<()> {
+        let client = self.pool.get().await
+            .map_err(|e| DatabaseError::ConnectionFailed(e.to_string()))?;
+        
+        let session_uuid = Uuid::from_str(session_id)
+            .map_err(|_| DatabaseError::SessionNotFound("Invalid session ID format".to_string()))?;
+
+        let now = Utc::now();
+        
+        let rows_affected = client
+            .execute(
+                r#"
+                UPDATE sessions 
+                SET session_started_at = $1
+                WHERE id = $2 AND session_started_at IS NULL
+                "#,
+                &[&now, &session_uuid]
+            )
+            .await
+            .map_err(|e| {
+                error!("Failed to mark session as started: {}", e);
+                DatabaseError::QueryFailed(format!("Failed to mark session as started: {}", e))
+            })?;
+
+        if rows_affected == 0 {
+            info!("Session {} was already marked as started or not found", session_id);
+        } else {
+            info!("✅ Session {} marked as started at {}", session_id, now);
+        }
+        
         Ok(())
     }
 
@@ -732,4 +771,18 @@ pub async fn finalize_session_duration(
     
     info!("✅ Session duration finalized");
     Ok("Session duration finalized successfully".to_string())
+}
+
+#[tauri::command]
+pub async fn mark_session_started(session_id: String) -> std::result::Result<String, String> {
+    info!("🚀 Marking session {} as started", session_id);
+    
+    let db = DatabaseManager::new().await
+        .map_err(|e| e.to_string())?;
+    
+    db.mark_session_started(&session_id).await
+        .map_err(|e| e.to_string())?;
+    
+    info!("✅ Session marked as started");
+    Ok("Session marked as started successfully".to_string())
 }

@@ -94,6 +94,7 @@ pub fn run() -> Result<()> {
             database::postgres::get_session_answers,
             database::postgres::get_interview_report,
             database::postgres::finalize_session_duration,
+            database::postgres::mark_session_started,
             // Window management
             resize_main_window
         ])

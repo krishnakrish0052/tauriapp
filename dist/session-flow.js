@@ -47,6 +47,9 @@ class SessionFlowManager {
 
         // Override the existing connect button to use our flow
         this.setupConnectButton();
+        
+        // Setup session close button
+        this.setupSessionCloseButton();
     }
 
     setupConnectButton() {
@@ -213,6 +216,10 @@ class SessionFlowManager {
                                 <span class="material-icons">link_off</span>
                                 Disconnect
                             </button>
+                            <button id="sessionCloseBtn" class="compact-btn close-btn" title="Close Application">
+                                <span class="material-icons">power_settings_new</span>
+                                Close
+                            </button>
                         </div>
                         <div class="detail-row full-width">
                             <span class="detail-label">🔗 Session ID:</span>
@@ -228,6 +235,9 @@ class SessionFlowManager {
         
         // Setup disconnect button
         this.setupDisconnectButton();
+        
+        // Setup close button for connected state
+        this.setupSessionCloseButton();
     }
 
     setupActivationButton() {
@@ -245,6 +255,46 @@ class SessionFlowManager {
             disconnectBtn.addEventListener('click', () => {
                 this.handleSessionDisconnection();
             });
+        }
+    }
+    
+    setupSessionCloseButton() {
+        // Wait for session close button to be ready
+        const checkAndSetup = () => {
+            const sessionCloseBtn = document.getElementById('sessionCloseBtn');
+            if (sessionCloseBtn) {
+                sessionCloseBtn.addEventListener('click', async () => {
+                    await this.handleApplicationClose();
+                });
+                console.log('✅ Session close button event listener attached');
+            } else {
+                setTimeout(checkAndSetup, 100);
+            }
+        };
+        checkAndSetup();
+    }
+    
+    async handleApplicationClose() {
+        console.log('🔴 Application close requested from session screen');
+        
+        // If there's an active session, stop the timer first
+        if (this.currentState === 'connected' || this.currentState === 'activated') {
+            this.stopTimer();
+        }
+        
+        // Use the same close command as the main close button
+        try {
+            await safeInvoke('close_application');
+        } catch (error) {
+            console.error('❌ Failed to close application:', error);
+            // Fallback: try to close the window directly
+            if (window.__TAURI__ && window.__TAURI__.window) {
+                try {
+                    await window.__TAURI__.window.appWindow.close();
+                } catch (fallbackError) {
+                    console.error('❌ Fallback close also failed:', fallbackError);
+                }
+            }
         }
     }
 
@@ -980,6 +1030,24 @@ const sessionFlowStyles = `
     }
     
     .disconnect-btn:disabled {
+        background: rgba(255, 71, 87, 0.3);
+        transform: none;
+        box-shadow: none;
+        cursor: not-allowed;
+    }
+    
+    .close-btn {
+        background: linear-gradient(135deg, var(--danger), rgba(255, 71, 87, 0.8));
+        color: white;
+    }
+    
+    .close-btn:hover {
+        background: linear-gradient(135deg, rgba(255, 71, 87, 0.9), var(--danger));
+        transform: translateY(-1px);
+        box-shadow: 0 2px 8px rgba(255, 71, 87, 0.3);
+    }
+    
+    .close-btn:disabled {
         background: rgba(255, 71, 87, 0.3);
         transform: none;
         box-shadow: none;

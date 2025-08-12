@@ -14,6 +14,7 @@ pub struct Session {
     pub resume_content: Option<String>,
     pub created_at: DateTime<Utc>,
     pub desktop_connected_at: Option<DateTime<Utc>>,
+    pub session_started_at: Option<DateTime<Utc>>,
     pub interview_duration: Option<i32>,
     pub credits_used: Option<i32>,
 }

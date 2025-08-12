@@ -470,8 +470,43 @@
             display: flex;
             flex-direction: row;
             align-items: center;
-            justify-content: center;
+            justify-content: space-between;
             gap: 12px;
+            position: relative;
+        }
+        
+        .session-header-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            flex: 1;
+        }
+        
+        .session-close-btn {
+            background: rgba(255, 71, 87, 0.1);
+            border: 1px solid rgba(255, 71, 87, 0.3);
+            border-radius: 8px;
+            color: var(--danger);
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            position: absolute;
+            top: 0;
+            right: 0;
+        }
+        
+        .session-close-btn:hover {
+            background: rgba(255, 71, 87, 0.2);
+            border-color: var(--danger);
+            transform: scale(1.05);
+        }
+        
+        .session-close-btn .material-icons {
+            font-size: 18px;
         }
         
         .session-icon {
@@ -623,10 +658,15 @@
         <div class="session-connection-container" id="sessionConnectionContainer">
             <div class="session-connection-panel" id="sessionConnectionPanel">
                 <div class="session-connection-header">
-                    <div class="session-icon">
-                        <span class="material-icons">link</span>
+                    <div class="session-header-content">
+                        <div class="session-icon">
+                            <span class="material-icons">link</span>
+                        </div>
+                        <h3>Connect to Session</h3>
                     </div>
-                    <h3>Connect to Session</h3>
+                    <button id="sessionCloseBtn" class="session-close-btn" title="Close Application">
+                        <span class="material-icons">power_settings_new</span>
+                    </button>
                 </div>
                 
                 <div class="session-connection-form">
@@ -675,7 +715,7 @@
                     <div class="utility-buttons">
                         <button id="systemSoundBtn" class="utility-btn" title="System Sound"><span class="material-icons">volume_up</span></button>
                         <button id="micBtn" class="utility-btn" title="Microphone"><span class="material-icons">mic</span></button>
-                        <button id="closeBtn" class="utility-btn danger" title="Close Application"><span class="material-icons">close</span></button>
+                        <button id="closeBtn" class="utility-btn danger" title="Close Application - Will stop session and recording"><span class="material-icons">power_settings_new</span></button>
                     </div>
                 </div>
             </div>
