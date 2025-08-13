@@ -1,7 +1,7 @@
 use tokio_postgres::{Client, NoTls, Error as PgError};
 use deadpool_postgres::{Config, Pool, Runtime};
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Utc, NaiveDateTime};
 use log::{info, error, warn};
 use std::str::FromStr;
 use serde::{Serialize, Deserialize};
@@ -145,7 +145,7 @@ impl DatabaseManager {
                     END
                 WHERE id = $3
                 "#,
-                &[&status, &now, &session_uuid]
+                &[&status, &now.naive_utc(), &session_uuid]
             )
             .await
             .map_err(|e| {
@@ -209,26 +209,32 @@ impl DatabaseManager {
         let session_uuid = Uuid::from_str(session_id)
             .map_err(|_| DatabaseError::SessionNotFound("Invalid session ID format".to_string()))?;
         
-        let question_id = Uuid::new_v4();
+        let message_id = Uuid::new_v4();
         let now = Utc::now();
+
+        // Create metadata JSON with question details
+        let metadata = serde_json::json!({
+            "questionNumber": question_number,
+            "category": category,
+            "difficulty": difficulty_level,
+            "expectedDuration": expected_duration,
+            "source": "desktop_app",
+            "timestamp": now.to_rfc3339()
+        });
 
         client
             .execute(
                 r#"
-                INSERT INTO interview_questions 
-                (id, session_id, question_number, question_text, category, 
-                 difficulty_level, expected_duration, asked_at, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+                INSERT INTO interview_messages 
+                (id, session_id, message_type, content, metadata, timestamp)
+                VALUES ($1, $2, 'question', $3, $4, $5)
                 "#,
                 &[
-                    &question_id,
+                    &message_id,
                     &session_uuid,
-                    &question_number,
                     &question_text,
-                    &category,
-                    &difficulty_level,
-                    &expected_duration,
-                    &now,
+                    &metadata,
+                    &now.naive_utc(),
                 ]
             )
             .await
@@ -237,8 +243,8 @@ impl DatabaseManager {
                 DatabaseError::QueryFailed(format!("Failed to insert question: {}", e))
             })?;
 
-        info!("Inserted interview question {} for session {}", question_id, session_id);
-        Ok(question_id)
+        info!("Inserted interview question {} for session {}", message_id, session_id);
+        Ok(message_id)
     }
 
     pub async fn insert_interview_answer(
@@ -256,26 +262,36 @@ impl DatabaseManager {
         let session_uuid = Uuid::from_str(session_id)
             .map_err(|_| DatabaseError::SessionNotFound("Invalid session ID format".to_string()))?;
         
-        let answer_id = Uuid::new_v4();
+        let message_id = Uuid::new_v4();
         let now = Utc::now();
+
+        // Create metadata JSON with answer details
+        let metadata = serde_json::json!({
+            "questionId": question_id,
+            "responseTime": response_time,
+            "aiFeedback": ai_feedback,
+            "aiScore": ai_score,
+            "source": "desktop_app",
+            "timestamp": now.to_rfc3339()
+        });
+
+        // Use answer_text or default to empty string if None
+        let content = answer_text.unwrap_or("");
 
         client
             .execute(
                 r#"
-                INSERT INTO interview_answers 
-                (id, question_id, session_id, answer_text, response_time, 
-                 ai_feedback, ai_score, answered_at, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+                INSERT INTO interview_messages 
+                (id, session_id, message_type, content, metadata, timestamp, parent_message_id)
+                VALUES ($1, $2, 'answer', $3, $4, $5, $6)
                 "#,
                 &[
-                    &answer_id,
-                    question_id,
+                    &message_id,
                     &session_uuid,
-                    &answer_text,
-                    &response_time,
-                    &ai_feedback,
-                    &ai_score,
-                    &now,
+                    &content,
+                    &metadata,
+                    &now.naive_utc(),
+                    question_id, // Link the answer to its question using parent_message_id
                 ]
             )
             .await
@@ -284,8 +300,8 @@ impl DatabaseManager {
                 DatabaseError::QueryFailed(format!("Failed to insert answer: {}", e))
             })?;
 
-        info!("Inserted interview answer {} for session {}", answer_id, session_id);
-        Ok(answer_id)
+        info!("Inserted interview answer {} for session {}", message_id, session_id);
+        Ok(message_id)
     }
 
     pub async fn update_session_duration_and_credits(
@@ -350,7 +366,7 @@ impl DatabaseManager {
                     &connection_id,
                     &session_uuid,
                     &desktop_app_version,
-                    &now,
+                    &now.naive_utc(),
                     &credits_deducted,
                 ]
             )
@@ -380,7 +396,7 @@ impl DatabaseManager {
                 SET desktop_connected_at = $1 
                 WHERE id = $2
                 "#,
-                &[&now, &session_uuid]
+                &[&now.naive_utc(), &session_uuid]
             )
             .await
             .map_err(|e| {
@@ -412,7 +428,7 @@ impl DatabaseManager {
                 SET session_started_at = $1
                 WHERE id = $2 AND session_started_at IS NULL
                 "#,
-                &[&now, &session_uuid]
+                &[&now.naive_utc(), &session_uuid]
             )
             .await
             .map_err(|e| {
@@ -443,7 +459,7 @@ impl DatabaseManager {
         Ok(format!("Database connection successful. {}", version))
     }
 
-    // Session data access methods
+    // Session data access methods - now reading from interview_messages table
     pub async fn get_session_questions(&self, session_id: &str) -> Result<Vec<InterviewQuestion>> {
         let client = self.pool.get().await
             .map_err(|e| DatabaseError::ConnectionFailed(e.to_string()))?;
@@ -454,11 +470,10 @@ impl DatabaseManager {
         let rows = client
             .query(
                 r#"
-                SELECT id, session_id, question_number, question_text, category, 
-                       difficulty_level, expected_duration, asked_at, created_at
-                FROM interview_questions
-                WHERE session_id = $1
-                ORDER BY question_number ASC
+                SELECT id, session_id, content, metadata, timestamp
+                FROM interview_messages
+                WHERE session_id = $1 AND message_type = 'question'
+                ORDER BY timestamp ASC
                 "#,
                 &[&session_uuid]
             )
@@ -469,17 +484,42 @@ impl DatabaseManager {
             })?;
 
         let mut questions = Vec::new();
-        for row in rows {
+        for (index, row) in rows.iter().enumerate() {
+            let metadata: Option<serde_json::Value> = row.get(3);
+            let question_number = metadata
+                .as_ref()
+                .and_then(|m| m.get("questionNumber"))
+                .and_then(|n| n.as_i64())
+                .unwrap_or((index + 1) as i64) as i32;
+            
+            let category = metadata
+                .as_ref()
+                .and_then(|m| m.get("category"))
+                .and_then(|c| c.as_str())
+                .unwrap_or("general");
+                
+            let difficulty = metadata
+                .as_ref()
+                .and_then(|m| m.get("difficulty"))
+                .and_then(|d| d.as_str())
+                .unwrap_or("medium");
+                
+            let expected_duration = metadata
+                .as_ref()
+                .and_then(|m| m.get("expectedDuration"))
+                .and_then(|d| d.as_i64())
+                .unwrap_or(30) as i32;
+
             questions.push(InterviewQuestion {
                 id: row.get(0),
                 session_id: row.get(1),
-                question_number: row.get(2),
-                question_text: row.get(3),
-                category: row.get(4),
-                difficulty_level: row.get(5),
-                expected_duration: row.get(6),
-                asked_at: row.get(7),
-                created_at: row.get(8),
+                question_number,
+                question_text: row.get(2),
+                category: category.to_string(),
+                difficulty_level: difficulty.to_string(),
+                expected_duration,
+                asked_at: row.get(4),
+                created_at: row.get(4),
             });
         }
 
@@ -496,11 +536,10 @@ impl DatabaseManager {
         let rows = client
             .query(
                 r#"
-                SELECT id, question_id, session_id, answer_text, response_time,
-                       ai_feedback, ai_score, answered_at, created_at
-                FROM interview_answers
-                WHERE session_id = $1
-                ORDER BY answered_at ASC
+                SELECT id, parent_message_id, session_id, content, metadata, timestamp
+                FROM interview_messages
+                WHERE session_id = $1 AND message_type = 'answer'
+                ORDER BY timestamp ASC
                 "#,
                 &[&session_uuid]
             )
@@ -512,16 +551,35 @@ impl DatabaseManager {
 
         let mut answers = Vec::new();
         for row in rows {
+            let metadata: Option<serde_json::Value> = row.get(4);
+            let response_time = metadata
+                .as_ref()
+                .and_then(|m| m.get("responseTime"))
+                .and_then(|r| r.as_i64())
+                .map(|r| r as i32);
+                
+            let ai_feedback = metadata
+                .as_ref()
+                .and_then(|m| m.get("aiFeedback"))
+                .and_then(|f| f.as_str())
+                .map(|s| s.to_string());
+                
+            let ai_score = metadata
+                .as_ref()
+                .and_then(|m| m.get("aiScore"))
+                .and_then(|s| s.as_i64())
+                .map(|s| s as i32);
+
             answers.push(InterviewAnswer {
                 id: row.get(0),
-                question_id: row.get(1),
+                question_id: row.get(1), // parent_message_id is the question ID
                 session_id: row.get(2),
-                answer_text: row.get(3),
-                response_time: row.get(4),
-                ai_feedback: row.get(5),
-                ai_score: row.get(6),
-                answered_at: row.get(7),
-                created_at: row.get(8),
+                answer_text: Some(row.get(3)),
+                response_time,
+                ai_feedback,
+                ai_score,
+                answered_at: row.get(5),
+                created_at: row.get(5),
             });
         }
 

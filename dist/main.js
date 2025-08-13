@@ -1073,6 +1073,26 @@ class MockMateController {
                 return;
             }
 
+            // ✅ STORE THE QUESTION FIRST
+            try {
+                console.log('📝 Storing manual question:', question);
+                await window.qaStorageManager.storeQuestion({
+                    questionText: question,
+                    questionNumber: 1,
+                    category: 'manual',
+                    difficultyLevel: 'medium',
+                    source: 'manual',
+                    metadata: {
+                        timestamp: new Date().toISOString(),
+                        expectedDuration: 5
+                    }
+                });
+                console.log('✅ Manual question stored successfully');
+            } catch (storageError) {
+                console.error('❌ Failed to store manual question:', storageError);
+                // Continue with AI generation even if storage fails
+            }
+
             // Validate selection before sending
             this.ensureValidModelSelection();
             
@@ -1697,6 +1717,28 @@ class MockMateController {
             const finalText = typeof data === 'string' ? data : data?.text || this.streamingText;
             this.streamingText = finalText;
             console.log('✅ Stream completed, final text length:', finalText.length);
+            
+            // ✅ STORE THE AI ANSWER IN DATABASE
+            try {
+                if (finalText && finalText.trim() && window.qaStorageManager) {
+                    console.log('💾 Storing AI response answer to database...');
+                    await window.qaStorageManager.storeAnswer({
+                        answerText: finalText,
+                        source: 'ai_response',
+                        metadata: {
+                            aiProvider: this.selectedProvider || 'unknown',
+                            aiModel: this.selectedModel || 'unknown',
+                            timestamp: new Date().toISOString()
+                        }
+                    });
+                    console.log('✅ AI response stored successfully in database');
+                } else {
+                    console.warn('⚠️ No valid answer text or QA Storage Manager not available');
+                }
+            } catch (storageError) {
+                console.error('❌ Failed to store AI response:', storageError);
+                // Don't prevent the UI from updating even if storage fails
+            }
         } else if (type === 'error') {
             // Error occurred - reset streaming state
             this.isStreaming = false;
@@ -1869,6 +1911,9 @@ style.textContent = `
     }
 `;
 document.head.appendChild(style);
+
+// Expose safeInvoke globally for other modules to use
+window.safeInvoke = safeInvoke;
 
 // Initialize the controller when the DOM is loaded AND Tauri is ready
 document.addEventListener('DOMContentLoaded', async () => {

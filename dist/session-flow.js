@@ -90,7 +90,7 @@ class SessionFlowManager {
             
             // Fetch real session details from database using the session ID
             console.log('📞 Fetching session details from database for ID:', cleanSessionId);
-            const sessionInfo = await safeInvoke('connect_session', {
+            const sessionInfo = await window.safeInvoke('connect_session', {
                 sessionId: cleanSessionId
             });
             
@@ -139,7 +139,12 @@ class SessionFlowManager {
         
         // Resize main window to accommodate the detailed session info and buttons
         try {
-            await window.__TAURI__.invoke('resize_main_window', { width: 800, height: 280 });
+            // Use the proper safeInvoke from main.js that handles the Tauri API correctly
+            if (window.safeInvoke) {
+                await window.safeInvoke('resize_main_window', { width: 800, height: 280 });
+            } else {
+                console.log('⚠️ safeInvoke not available, skipping window resize');
+            }
             console.log('📐 Main window resized to show full session details');
         } catch (resizeError) {
             console.warn('⚠️ Failed to resize main window:', resizeError);
@@ -284,7 +289,7 @@ class SessionFlowManager {
         
         // Use the same close command as the main close button
         try {
-            await safeInvoke('close_application');
+            await window.safeInvoke('close_application');
         } catch (error) {
             console.error('❌ Failed to close application:', error);
             // Fallback: try to close the window directly
@@ -311,19 +316,16 @@ class SessionFlowManager {
             this.setActivateButtonLoading(true);
             
             // Activate the session
-            const result = await safeInvoke('activate_session', { sessionId: this.sessionData.session_id });
+            const result = await window.safeInvoke('activate_session', { sessionId: this.sessionData.session_id });
             
             console.log('✅ Session activated successfully:', result);
             
-            // Start the interview timer (optional - may not be implemented yet)
-            try {
-                const timerState = await safeInvoke('start_interview_timer', { sessionId: this.sessionData.session_id });
-                this.timerState = timerState;
-                console.log('✅ Interview timer started:', timerState);
-            } catch (timerError) {
-                console.warn('⚠️ Timer not available yet:', timerError);
-                this.timerState = { started_at: new Date().toISOString(), status: 'active' };
-            }
+            // Initialize timer state (no backend timer start needed)
+            this.timerState = { 
+                started_at: new Date().toISOString(), 
+                status: 'active' 
+            };
+            console.log('✅ Timer state initialized:', this.timerState);
             
             // Transition to activated state
             this.transitionToActivated();
@@ -350,6 +352,12 @@ class SessionFlowManager {
         
         // Start the timer display
         this.startTimer();
+        
+        // Initialize QA Storage Manager for real-time data storage
+        this.initializeQAStorageManager();
+        
+        // Initialize Session Completion Monitor for real-time session monitoring
+        this.initializeSessionMonitor();
         
         // Update body class
         document.body.className = 'session-activated';
@@ -386,7 +394,12 @@ class SessionFlowManager {
         
         // Resize window back to smaller size for initial state
         try {
-            await window.__TAURI__.invoke('resize_main_window', { width: 800, height: 160 });
+            // Use the proper safeInvoke from main.js that handles the Tauri API correctly
+            if (window.safeInvoke) {
+                await window.safeInvoke('resize_main_window', { width: 800, height: 160 });
+            } else {
+                console.log('⚠️ safeInvoke not available, skipping window resize');
+            }
             console.log('📰 Main window resized back to initial size');
         } catch (resizeError) {
             console.warn('⚠️ Failed to resize main window:', resizeError);
@@ -621,7 +634,7 @@ class SessionFlowManager {
         try {
             const minutes = Math.floor(elapsedSeconds / 60);
             
-            await safeInvoke('update_session_timer', {
+            await window.safeInvoke('update_session_timer', {
                 sessionId: this.sessionData.session_id,
                 elapsedMinutes: minutes,
                 isFinal: isFinal
@@ -655,8 +668,177 @@ class SessionFlowManager {
                 this.updateTimerDisplay();
             }, 1000);
             
-            console.log('▶️ Timer resumed');
+        console.log('▶️ Timer resumed');
         }
+    }
+    
+    // Real-time Question & Answer Storage Integration
+    initializeQAStorageManager() {
+        if (!window.qaStorageManager) {
+            console.warn('⚠️ QA Storage Manager not available');
+            return;
+        }
+        
+        // Get auth token from session data or use a mock token for desktop app
+        const authToken = this.sessionData?.auth_token || this.sessionData?.user_details?.auth_token || 'desktop-app-token';
+        
+        console.log('🔑 Using auth token for QA Storage Manager:', authToken ? 'Token available' : 'No token');
+        
+        // Initialize QA Storage Manager with session data
+        window.qaStorageManager.initialize(
+            { id: this.sessionData.session_id }, 
+            authToken, 
+            this.sessionData.user_details?.user_id
+        );
+        console.log('✅ QA Storage Manager initialized for real-time Q&A storage');
+        
+        // Hook into main controller for question and answer events
+        if (window.mockMateController) {
+            // Store original methods to wrap them
+            const originalGenerateAnswer = window.mockMateController.generateAnswer;
+            const originalSendManualQuestion = window.mockMateController.sendManualQuestion;
+            const originalSendToAiWindow = window.mockMateController.sendToAiWindow;
+            
+            // Initialize question counter
+            window.qaStorageManager.currentQuestionNumber = 1;
+            
+            // Wrap generateAnswer to store questions from transcription
+            window.mockMateController.generateAnswer = async function(...args) {
+                const questionText = this.fullTranscription || document.getElementById('questionInput')?.value;
+                
+                if (questionText && questionText.trim()) {
+                    try {
+                        // Store question immediately with correct format
+                        const result = await window.qaStorageManager.storeQuestion({
+                            questionText: questionText.trim(),
+                            questionNumber: window.qaStorageManager.currentQuestionNumber,
+                            category: 'general',
+                            difficultyLevel: 'medium',
+                            source: 'transcribed',
+                            metadata: {
+                                timestamp: new Date().toISOString(),
+                                session_id: window.sessionFlowManager?.sessionData?.session_id
+                            }
+                        });
+                        console.log('✅ Transcribed question stored successfully:', result);
+                        
+                        // Increment question number
+                        window.qaStorageManager.currentQuestionNumber += 1;
+                    } catch (error) {
+                        console.error('❌ Failed to store transcribed question:', error);
+                    }
+                }
+                
+                // Call original method
+                return originalGenerateAnswer.apply(this, args);
+            };
+            
+            // Wrap sendManualQuestion to store manual questions
+            window.mockMateController.sendManualQuestion = async function(...args) {
+                const questionText = document.getElementById('questionInput')?.value;
+                
+                if (questionText && questionText.trim()) {
+                    try {
+                        // Store question immediately with correct format
+                        const result = await window.qaStorageManager.storeQuestion({
+                            questionText: questionText.trim(),
+                            questionNumber: window.qaStorageManager.currentQuestionNumber,
+                            category: 'general',
+                            difficultyLevel: 'medium',
+                            source: 'manual_input',
+                            metadata: {
+                                timestamp: new Date().toISOString(),
+                                session_id: window.sessionFlowManager?.sessionData?.session_id
+                            }
+                        });
+                        console.log('✅ Manual question stored successfully:', result);
+                        
+                        // Increment question number
+                        window.qaStorageManager.currentQuestionNumber += 1;
+                    } catch (error) {
+                        console.error('❌ Failed to store manual question:', error);
+                    }
+                }
+                
+                // Call original method
+                return originalSendManualQuestion.apply(this, args);
+            };
+            
+            // Wrap sendToAiWindow to capture and store AI responses
+            window.mockMateController.sendToAiWindow = async function(type, content, ...args) {
+                // Store answer when response is complete
+                if (type === 'complete' && content && typeof content === 'string' && content.trim()) {
+                    try {
+                        const result = await window.qaStorageManager.storeAnswer({
+                            answerText: content.trim(),
+                            questionId: window.qaStorageManager.currentQuestionId,
+                            source: 'ai_response',
+                            metadata: {
+                                timestamp: new Date().toISOString(),
+                                session_id: window.sessionFlowManager?.sessionData?.session_id,
+                                model: this.selectedModel,
+                                provider: this.selectedProvider
+                            }
+                        });
+                        console.log('✅ AI answer stored successfully:', result);
+                    } catch (error) {
+                        console.error('❌ Failed to store AI answer:', error);
+                    }
+                }
+                
+                // Call original method
+                return originalSendToAiWindow.apply(this, [type, content, ...args]);
+            };
+            
+            console.log('✅ Hooked into main controller for real-time Q&A storage');
+        }
+    }
+    
+    // Real-time Session Completion Monitoring
+    initializeSessionMonitor() {
+        if (!window.sessionCompletionMonitor) {
+            console.warn('⚠️ Session Completion Monitor not available');
+            return;
+        }
+        
+        // Get auth token from session data or use mock token for desktop app
+        const authToken = this.sessionData?.auth_token || this.sessionData?.user_details?.auth_token || 'desktop-app-token';
+        
+        console.log('🔑 Using auth token for Session Monitor:', authToken ? 'Token available' : 'No token');
+        
+        // Initialize session completion monitor
+        const callbacks = {
+            onCompleted: async (statusData) => {
+                console.log('🎯 Session completed callback triggered');
+                
+                // Stop timer and cleanup
+                this.stopTimer();
+                
+                // Ensure final Q&A sync
+                if (window.qaStorageManager) {
+                    await window.qaStorageManager.forceFinalSync();
+                }
+                
+                console.log('✅ Session completion cleanup finished');
+            },
+            
+            onStopped: async (statusData, reason) => {
+                console.log(`⏹️ Session stopped callback triggered: ${reason}`);
+                
+                // Stop timer and cleanup
+                this.stopTimer();
+                
+                // Ensure final Q&A sync
+                if (window.qaStorageManager) {
+                    await window.qaStorageManager.forceFinalSync();
+                }
+                
+                console.log('✅ Session stop cleanup finished');
+            }
+        };
+        
+        window.sessionCompletionMonitor.initialize(this.sessionData, authToken, callbacks);
+        console.log('✅ Session Completion Monitor initialized for real-time monitoring');
     }
 }
 
@@ -1079,19 +1261,6 @@ document.head.appendChild(sessionFlowStyleEl);
 // Initialize the session flow manager
 window.sessionFlowManager = new SessionFlowManager();
 
-// Global safeInvoke function for compatibility
-async function safeInvoke(command, args = {}) {
-    if (!window.__TAURI__ || !window.__TAURI__.invoke) {
-        throw new Error('Tauri not available');
-    }
-    
-    try {
-        console.log(`📞 Invoking: ${command}`, args);
-        return await window.__TAURI__.invoke(command, args);
-    } catch (error) {
-        console.error(`❌ Failed to invoke ${command}:`, error);
-        throw error;
-    }
-}
+// Use global safeInvoke from main.js instead of defining our own
 
 console.log('✅ Session Flow Manager loaded successfully');

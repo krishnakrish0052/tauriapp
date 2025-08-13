@@ -12,6 +12,7 @@ class SessionConnectionManager {
         
         this.setupUI();
         this.setupEventListeners();
+        this.setupProtocolHandling(); // Add protocol handling
         
         // Ensure session panel is visible on first run
         setTimeout(() => {

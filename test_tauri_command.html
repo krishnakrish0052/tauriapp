@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Tauri Question Storage</title>
+</head>
+<body>
+    <h1>Test Manual Question Storage</h1>
+    <p><strong>Session ID:</strong> e302a575-1e13-4466-8ae7-7aea024df3ec</p>
+    
+    <div>
+        <label for="questionInput">Question:</label><br>
+        <textarea id="questionInput" rows="3" cols="50" placeholder="Enter your test question here...">What is your experience with DevOps tools?</textarea>
+    </div>
+    
+    <br>
+    <button onclick="testQuestionStorage()">Store Question Using Tauri Command</button>
+    
+    <div id="result" style="margin-top: 20px; padding: 10px; border: 1px solid #ccc; min-height: 100px;">
+        Results will appear here...
+    </div>
+
+    <script>
+        async function testQuestionStorage() {
+            const resultDiv = document.getElementById('result');
+            const questionText = document.getElementById('questionInput').value;
+            
+            resultDiv.innerHTML = '<p>🔄 Testing question storage...</p>';
+            
+            try {
+                console.log('🧪 Starting Tauri command test...');
+                
+                // Check if Tauri is available
+                if (!window.__TAURI__) {
+                    throw new Error('Tauri not available - make sure you\'re running this in the Tauri app');
+                }
+                
+                console.log('✅ Tauri is available');
+                console.log('📝 Question to store:', questionText);
+                
+                // Test the Tauri command directly
+                const questionId = await window.__TAURI__.invoke('save_interview_question', {
+                    sessionId: 'e302a575-1e13-4466-8ae7-7aea024df3ec',
+                    questionNumber: 1,
+                    questionText: questionText,
+                    category: 'test',
+                    difficultyLevel: 'medium',
+                    expectedDuration: 5
+                });
+                
+                console.log('✅ Question stored successfully:', questionId);
+                
+                resultDiv.innerHTML = `
+                    <h3>✅ SUCCESS!</h3>
+                    <p><strong>Question stored successfully</strong></p>
+                    <p><strong>Question ID:</strong> ${questionId}</p>
+                    <p><strong>Session ID:</strong> e302a575-1e13-4466-8ae7-7aea024df3ec</p>
+                    <p><strong>Question:</strong> "${questionText}"</p>
+                    <p><em>Now run the database query again to verify!</em></p>
+                `;
+                
+            } catch (error) {
+                console.error('❌ Error storing question:', error);
+                
+                resultDiv.innerHTML = `
+                    <h3>❌ ERROR</h3>
+                    <p><strong>Failed to store question</strong></p>
+                    <p><strong>Error:</strong> ${error.message}</p>
+                    <p><strong>Full error:</strong> ${JSON.stringify(error, null, 2)}</p>
+                    <hr>
+                    <h4>Debugging Info:</h4>
+                    <p><strong>Tauri available:</strong> ${!!window.__TAURI__}</p>
+                    <p><strong>Question text:</strong> "${questionText}"</p>
+                    <p><strong>Session ID:</strong> e302a575-1e13-4466-8ae7-7aea024df3ec</p>
+                `;
+            }
+        }
+        
+        // Log when page loads
+        console.log('🧪 Test page loaded');
+        console.log('Tauri available:', !!window.__TAURI__);
+        
+        // Wait for Tauri to be ready
+        setTimeout(() => {
+            console.log('Tauri available (after delay):', !!window.__TAURI__);
+        }, 1000);
+    </script>
+</body>
+</html>
