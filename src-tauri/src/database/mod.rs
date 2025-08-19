@@ -4,9 +4,9 @@ pub mod sync;
 pub mod shared;
 
 pub use postgres::DatabaseManager;
-pub use models::*;
-pub use sync::*;
-pub use shared::*;
+pub use models::{InterviewQuestion, InterviewAnswer};
+pub use sync::DatabaseSync;
+pub use shared::{Session, User, InterviewConfig, SessionWithUser, UserInfo, get_session_with_user_info, activate_session, disconnect_session, initialize_database};
 
 use thiserror::Error;
 

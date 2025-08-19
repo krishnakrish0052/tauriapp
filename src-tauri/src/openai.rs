@@ -36,7 +36,18 @@ impl OpenAIModel {
 #[derive(Serialize, Deserialize)]
 struct OpenAIMessage {
     role: String,
-    content: String,
+    content: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ImageContent {
+    r#type: String,
+    image_url: ImageUrl,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ImageUrl {
+    url: String,
 }
 
 #[derive(Serialize)]
@@ -97,11 +108,11 @@ impl OpenAIClient {
             messages: vec![
                 OpenAIMessage {
                     role: "system".to_string(),
-                    content: system_prompt,
+                    content: serde_json::Value::String(system_prompt),
                 },
                 OpenAIMessage {
                     role: "user".to_string(),
-                    content: user_prompt,
+                    content: serde_json::Value::String(user_prompt),
                 },
             ],
             max_tokens: 1000,
@@ -136,7 +147,12 @@ impl OpenAIClient {
                     usage.prompt_tokens, usage.completion_tokens, usage.total_tokens
                 );
             }
-            Ok(choice.message.content.clone())
+            // Extract content as string
+            let content = match &choice.message.content {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            Ok(content)
         } else {
             Err(anyhow::anyhow!("No response choices from OpenAI"))
         }
@@ -188,11 +204,11 @@ impl OpenAIClient {
             messages: vec![
                 OpenAIMessage {
                     role: "system".to_string(),
-                    content: system_prompt,
+                    content: serde_json::Value::String(system_prompt),
                 },
                 OpenAIMessage {
                     role: "user".to_string(),
-                    content: user_prompt,
+                    content: serde_json::Value::String(user_prompt),
                 },
             ],
             max_tokens: 800,
@@ -217,9 +233,114 @@ impl OpenAIClient {
         let openai_response: OpenAIResponse = response.json().await?;
 
         if let Some(choice) = openai_response.choices.first() {
-            Ok(choice.message.content.clone())
+            // Extract content as string
+            let content = match &choice.message.content {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            Ok(content)
         } else {
             Err(anyhow::anyhow!("No response choices from OpenAI"))
+        }
+    }
+
+    /// Analyze a screenshot using OpenAI's vision models
+    pub async fn analyze_screenshot_with_vision(
+        &self,
+        base64_image: &str,
+        analysis_prompt: &str,
+        context: &InterviewContext,
+        model: OpenAIModel,
+    ) -> Result<String> {
+        info!("🔍 Analyzing screenshot with OpenAI Vision API...");
+        
+        // For vision analysis, we need to use a vision-capable model
+        let vision_model = match model {
+            OpenAIModel::GPT4Turbo => "gpt-4-vision-preview",
+            OpenAIModel::GPT4 => "gpt-4-vision-preview",
+            _ => {
+                // Fallback to text-based analysis for non-vision models
+                return self.analyze_screen_content(
+                    "Unable to analyze screenshot directly. Please describe the screen content.", 
+                    context, 
+                    model
+                ).await;
+            }
+        };
+        
+        let system_prompt = format!(
+            "You are an expert technical interviewer analyzing a screenshot. {}\n\n{}",
+            analysis_prompt,
+            self.build_system_prompt(context)
+        );
+        
+        // Build the vision message with image data
+        let image_content = serde_json::json!([
+            {
+                "type": "text",
+                "text": analysis_prompt
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": format!("data:image/png;base64,{}", base64_image)
+                }
+            }
+        ]);
+        
+        let request = OpenAIRequest {
+            model: vision_model.to_string(),
+            messages: vec![
+                OpenAIMessage {
+                    role: "system".to_string(),
+                    content: serde_json::Value::String(system_prompt),
+                },
+                OpenAIMessage {
+                    role: "user".to_string(),
+                    content: image_content,
+                },
+            ],
+            max_tokens: 1500,
+            temperature: 0.7,
+            stream: false,
+        };
+        
+        info!("📤 Sending vision analysis request to OpenAI...");
+        
+        let response = self
+            .client
+            .post(&format!("{}/chat/completions", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&request)
+            .send()
+            .await?;
+        
+        if !response.status().is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            error!("❌ OpenAI Vision API error: {}", error_text);
+            return Err(anyhow::anyhow!("OpenAI Vision API error: {}", error_text));
+        }
+        
+        let openai_response: OpenAIResponse = response.json().await?;
+        
+        if let Some(choice) = openai_response.choices.first() {
+            info!("✅ Received vision analysis response from OpenAI");
+            if let Some(usage) = openai_response.usage {
+                info!(
+                    "Vision Token usage - Prompt: {}, Completion: {}, Total: {}",
+                    usage.prompt_tokens, usage.completion_tokens, usage.total_tokens
+                );
+            }
+            
+            // Extract content as string
+            let content = match &choice.message.content {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            Ok(content)
+        } else {
+            Err(anyhow::anyhow!("No response choices from OpenAI Vision"))
         }
     }
 }

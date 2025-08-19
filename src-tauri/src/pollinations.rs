@@ -81,38 +81,508 @@ Please provide a comprehensive and professional answer to this interview questio
 
         info!("Generating answer with Pollinations model: {}", model.as_str());
         
-        // Build URL with proper query parameters
-        let mut url = reqwest::Url::parse(&format!("{}/", self.base_url))?;
-        url.query_pairs_mut()
-            .append_pair("prompt", &prompt)
-            .append_pair("model", model.as_str())
-            .append_pair("private", "true")
-            .append_pair("referrer", "mockmate")
-            .append_pair("temperature", "0.7");
-
-        info!("Pollinations request URL: {}", url);
+        // Try different endpoints and formats for Pollinations API
+        let endpoints = vec![
+            ("https://text.pollinations.ai/openai", "json"),
+            ("https://text.pollinations.ai", "text"),
+        ];
+        
+        for (base_url, response_format) in endpoints {
+            info!("Trying Pollinations endpoint: {} (format: {})", base_url, response_format);
+            
+            match self.try_generate_with_endpoint(base_url, &prompt, &model, response_format).await {
+                Ok(result) => {
+                    info!("✅ Successfully generated answer with endpoint: {}", base_url);
+                    return Ok(result);
+                }
+                Err(e) => {
+                    error!("❌ Failed with endpoint {}: {}", base_url, e);
+                    continue;
+                }
+            }
+        }
+        
+        // If all endpoints fail, return a helpful error
+        Err(anyhow::anyhow!("All Pollinations API endpoints failed. The service might be unavailable."))
+    }
+    
+    async fn try_generate_with_endpoint(
+        &self,
+        base_url: &str,
+        prompt: &str,
+        model: &PollinationsModel,
+        response_format: &str,
+    ) -> Result<String> {
+        match response_format {
+            "json" => self.try_json_endpoint(base_url, prompt, model).await,
+            "text" => self.try_text_endpoint(base_url, prompt, model).await,
+            _ => Err(anyhow::anyhow!("Unknown response format: {}", response_format))
+        }
+    }
+    
+    async fn try_json_endpoint(
+        &self,
+        base_url: &str,
+        prompt: &str,
+        model: &PollinationsModel,
+    ) -> Result<String> {
+        let payload = serde_json::json!({
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful AI assistant."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "model": model.as_str(),
+            "stream": false,
+            "temperature": 0.7
+        });
         
         let response = self
             .client
-            .get(url)
+            .post(base_url)
+            .header("Content-Type", "application/json")
             .header("User-Agent", "MockMate/1.0")
+            .json(&payload)
             .send()
             .await?;
 
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            error!("Pollinations API error {}: {}", status, error_text);
-            return Err(anyhow::anyhow!("Pollinations API error {}: {}", status, error_text));
+            return Err(anyhow::anyhow!("HTTP {}: {}", status, error_text));
         }
 
         let response_text = response.text().await?;
-        info!("Received response from Pollinations: {} characters", response_text.len());
+        
+        // Try to parse as JSON first
+        if let Ok(json_response) = serde_json::from_str::<Value>(&response_text) {
+            // Extract content from different possible JSON structures
+            if let Some(content) = json_response.get("choices")
+                .and_then(|choices| choices.get(0))
+                .and_then(|choice| choice.get("message"))
+                .and_then(|message| message.get("content"))
+                .and_then(|content| content.as_str()) {
+                return Ok(content.to_string());
+            }
+            
+            if let Some(content) = json_response.get("response")
+                .and_then(|response| response.as_str()) {
+                return Ok(content.to_string());
+            }
+            
+            if let Some(content) = json_response.get("content")
+                .and_then(|content| content.as_str()) {
+                return Ok(content.to_string());
+            }
+        }
+        
+        // If JSON parsing fails or doesn't contain expected fields, return raw text
+        if response_text.trim().starts_with("<!DOCTYPE html>") || response_text.trim().starts_with("<html") {
+            return Err(anyhow::anyhow!("Received HTML response instead of JSON"));
+        }
+        
+        Ok(response_text)
+    }
+    
+    async fn try_text_endpoint(
+        &self,
+        base_url: &str,
+        prompt: &str,
+        model: &PollinationsModel,
+    ) -> Result<String> {
+        // Build URL with proper query parameters for text endpoint
+        let mut url = reqwest::Url::parse(&format!("{}/", base_url))?;
+        url.query_pairs_mut()
+            .append_pair("prompt", prompt)
+            .append_pair("model", model.as_str())
+            .append_pair("private", "true")
+            .append_pair("referrer", "mockmate")
+            .append_pair("temperature", "0.7");
+
+        info!("Pollinations text request URL: {}", url.as_str().chars().take(200).collect::<String>() + "...");
+        
+        let response = self
+            .client
+            .get(url)
+            .header("User-Agent", "MockMate/1.0")
+            .header("Accept", "text/plain")
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("HTTP {}: {}", status, error_text));
+        }
+
+        let response_text = response.text().await?;
+        info!("Received response from Pollinations text endpoint: {} characters", response_text.len());
+        
+        // Check if we got HTML instead of plain text
+        if response_text.trim().starts_with("<!DOCTYPE html>") || response_text.trim().starts_with("<html") {
+            return Err(anyhow::anyhow!("Received HTML response instead of plain text"));
+        }
         
         if response_text.trim().is_empty() {
-            Err(anyhow::anyhow!("Empty response from Pollinations API"))
+            return Err(anyhow::anyhow!("Empty response from Pollinations API"));
+        }
+        
+        Ok(response_text.trim().to_string())
+    }
+
+    /// Analyze a screenshot using Pollinations with vision-capable models (like OpenAI GPT-4)
+    pub async fn analyze_screenshot_with_vision(
+        &self,
+        base64_image: &str,
+        analysis_prompt: &str,
+        context: &super::openai::InterviewContext,
+        model: PollinationsModel,
+    ) -> Result<String> {
+        info!("🔍 Analyzing screenshot with Pollinations model: {}", model.as_str());
+        
+        // Build a comprehensive system prompt for screenshot analysis
+        let system_prompt = format!(
+            "You are an expert technical interviewer analyzing a screenshot to generate relevant interview questions. {}
+
+{}
+
+IMPORTANT INSTRUCTIONS:
+1. Carefully examine the screenshot to identify technical content
+2. Generate ONE specific, relevant interview question based on what you see
+3. The question should test the candidate's understanding of the visible content
+4. Return your response in this EXACT JSON format:
+{{
+  \"question\": \"Your specific interview question here?\",
+  \"analysis\": \"Brief explanation of why this question is relevant\",
+  \"confidence\": 0.9
+}}
+
+The screenshot might contain:
+- Source code (any programming language)
+- Development tools and IDEs (VS Code, IntelliJ, etc.)
+- Documentation or technical articles
+- System interfaces or applications
+- Technical diagrams or architecture
+- Database schemas or queries
+- Configuration files (JSON, YAML, XML)
+- Terminal/command line interfaces
+- Error messages or logs
+- API endpoints or responses
+- Web applications or interfaces
+
+Generate a question that:
+- Is specific to what's visible in the image
+- Tests technical knowledge or problem-solving skills
+- Is appropriate for the {} position{}
+- Can be answered by someone familiar with the technology shown
+
+EXAMPLE RESPONSES:
+- If you see React code: \"What is the purpose of the useEffect hook in this component and when does it run?\"
+- If you see SQL query: \"How would you optimize this query for better performance?\"
+- If you see error message: \"What is causing this error and how would you debug it?\"
+- If you see API endpoint: \"What HTTP method would be most appropriate for this endpoint and why?\"
+
+Provide only the JSON response, no other text.",
+            analysis_prompt,
+            self.build_system_prompt(context),
+            context.position.as_deref().unwrap_or("software development"),
+            context.company.as_ref().map(|c| format!(" at {}", c)).unwrap_or_default()
+        );
+        
+        // Get API key and referrer from environment
+        let api_key = std::env::var("POLLINATIONS_API_KEY")
+            .unwrap_or_default();
+        let referrer = std::env::var("POLLINATIONS_REFERER")
+            .unwrap_or_else(|_| "mockmate".to_string());
+
+        // Build messages with image content for vision analysis
+        let messages = vec![
+            serde_json::json!({
+                "role": "system",
+                "content": system_prompt
+            }),
+            serde_json::json!({
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": analysis_prompt
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": format!("data:image/png;base64,{}", base64_image)
+                        }
+                    }
+                ]
+            })
+        ];
+
+        let mut payload = serde_json::json!({
+            "model": model.as_str(),
+            "messages": messages,
+            "stream": false,
+            "private": true,
+            "temperature": 0.7,
+            "max_tokens": 1500
+        });
+
+        // Add referrer to payload if available
+        if !referrer.is_empty() {
+            payload["referrer"] = serde_json::Value::String(referrer);
+        }
+
+        info!("📤 Sending vision analysis request to Pollinations...");
+        
+        let url = format!("{}/openai", self.base_url);
+        let mut request_builder = self.client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("User-Agent", "MockMate/1.0");
+
+        // Add Bearer token if available
+        if !api_key.is_empty() {
+            request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
+        }
+
+        let response = request_builder
+            .json(&payload)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            error!("❌ Pollinations vision API error {}: {}", status, error_text);
+            return Err(anyhow::anyhow!("Pollinations vision API error {}: {}", status, error_text));
+        }
+
+        let response_text = response.text().await?;
+        info!("✅ Received vision analysis response from Pollinations: {} characters", response_text.len());
+        
+        // Try to parse as OpenAI-compatible JSON response
+        match serde_json::from_str::<Value>(&response_text) {
+            Ok(json) => {
+                // Look for content in OpenAI-compatible structure
+                if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
+                    if let Some(first_choice) = choices.first() {
+                        if let Some(message) = first_choice.get("message") {
+                            if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
+                                return Ok(content.to_string());
+                            }
+                        }
+                        // Also check for direct text field in choice
+                        if let Some(text) = first_choice.get("text").and_then(|t| t.as_str()) {
+                            return Ok(text.to_string());
+                        }
+                    }
+                }
+                
+                // Look for direct content field
+                if let Some(content) = json.get("content").and_then(|c| c.as_str()) {
+                    return Ok(content.to_string());
+                }
+                
+                // If we can't parse the expected structure, return the raw response
+                Ok(response_text.trim().to_string())
+            }
+            Err(_) => {
+                // If not valid JSON, treat as raw text response
+                Ok(response_text.trim().to_string())
+            }
+        }
+    }
+
+    /// Analyze a screenshot using Pollinations with vision-capable models with streaming support
+    pub async fn analyze_screenshot_with_vision_streaming<F>(
+        &self,
+        base64_image: &str,
+        analysis_prompt: &str,
+        context: &super::openai::InterviewContext,
+        model: PollinationsModel,
+        mut on_token: F,
+    ) -> Result<String>
+    where
+        F: FnMut(&str) + Send,
+    {
+        info!("🔍 Analyzing screenshot with Pollinations streaming model: {}", model.as_str());
+        
+        // Build a comprehensive system prompt for screenshot analysis
+        let system_prompt = format!(
+            "You are an expert technical interviewer analyzing a screenshot to generate relevant interview questions. {}
+
+{}
+
+IMPORTANT INSTRUCTIONS:
+1. Carefully examine the screenshot to identify technical content
+2. Generate ONE specific, relevant interview question based on what you see
+3. The question should test the candidate's understanding of the visible content
+4. Return your response in this EXACT JSON format:
+{{
+  \"generated_question\": \"Your specific interview question here?\",
+  \"analysis\": \"Brief explanation of why this question is relevant\",
+  \"confidence\": 0.9
+}}
+
+The screenshot might contain:
+- Source code (any programming language)
+- Development tools and IDEs (VS Code, IntelliJ, etc.)
+- Documentation or technical articles
+- System interfaces or applications
+- Technical diagrams or architecture
+- Database schemas or queries
+- Configuration files (JSON, YAML, XML)
+- Terminal/command line interfaces
+- Error messages or logs
+- API endpoints or responses
+- Web applications or interfaces
+
+Generate a question that:
+- Is specific to what's visible in the image
+- Tests technical knowledge or problem-solving skills
+- Is appropriate for the {} position{}
+- Can be answered by someone familiar with the technology shown
+
+EXAMPLE RESPONSES:
+- If you see React code: \"What is the purpose of the useEffect hook in this component and when does it run?\"
+- If you see SQL query: \"How would you optimize this query for better performance?\"
+- If you see error message: \"What is causing this error and how would you debug it?\"
+- If you see API endpoint: \"What HTTP method would be most appropriate for this endpoint and why?\"
+
+Provide only the JSON response, no other text.",
+            analysis_prompt,
+            self.build_system_prompt(context),
+            context.position.as_deref().unwrap_or("software development"),
+            context.company.as_ref().map(|c| format!(" at {}", c)).unwrap_or_default()
+        );
+        
+        // Get API key and referrer from environment
+        let api_key = std::env::var("POLLINATIONS_API_KEY")
+            .unwrap_or_default();
+        let referrer = std::env::var("POLLINATIONS_REFERER")
+            .unwrap_or_else(|_| "mockmate".to_string());
+
+        // Build messages with image content for vision analysis
+        let messages = vec![
+            serde_json::json!({
+                "role": "system",
+                "content": system_prompt
+            }),
+            serde_json::json!({
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": analysis_prompt
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": format!("data:image/png;base64,{}", base64_image)
+                        }
+                    }
+                ]
+            })
+        ];
+
+        let mut payload = serde_json::json!({
+            "model": model.as_str(),
+            "messages": messages,
+            "stream": true, // Enable streaming
+            "private": true,
+            "temperature": 0.7,
+            "max_tokens": 1500
+        });
+
+        // Add referrer to payload if available
+        if !referrer.is_empty() {
+            payload["referrer"] = serde_json::Value::String(referrer);
+        }
+
+        info!("📤 Sending streaming vision analysis request to Pollinations...");
+        
+        let url = format!("{}/openai", self.base_url);
+        let mut request_builder = self.client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("User-Agent", "MockMate/1.0")
+            .header("Accept", "text/event-stream");
+
+        // Add Bearer token if available
+        if !api_key.is_empty() {
+            request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
+        }
+
+        let response = request_builder
+            .json(&payload)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            error!("❌ Pollinations streaming vision API error {}: {}", status, error_text);
+            return Err(anyhow::anyhow!("Pollinations streaming vision API error {}: {}", status, error_text));
+        }
+
+        let mut stream = response.bytes_stream();
+        let mut full_response = String::new();
+        let mut buffer = String::new();
+
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(bytes) => {
+                    let text = String::from_utf8_lossy(&bytes);
+                    buffer.push_str(&text);
+                    
+                    // Process complete lines in buffer
+                    while let Some(newline_pos) = buffer.find('\n') {
+                        let line = buffer[..newline_pos].trim().to_string();
+                        buffer.drain(..newline_pos + 1);
+                        
+                        if let Some(content) = self.parse_sse_line(&line) {
+                            if content == "[DONE]" {
+                                info!("SSE stream completed with [DONE]");
+                                return Ok(full_response);
+                            }
+                            
+                            if !content.is_empty() {
+                                // Send individual token for progressive display
+                                on_token(&content);
+                                full_response.push_str(&content);
+                                info!("📤 POLLINATIONS VISION: Sent token to callback: '{}', token length: {}, total length: {}", 
+                                    content.chars().take(50).collect::<String>(), content.len(), full_response.len());
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Error reading SSE stream: {}", e);
+                    break;
+                }
+            }
+        }
+        
+        // Process any remaining content in buffer
+        if !buffer.trim().is_empty() {
+            if let Some(content) = self.parse_sse_line(buffer.trim()) {
+                if content != "[DONE]" && !content.is_empty() {
+                    on_token(&content);
+                    full_response.push_str(&content);
+                }
+            }
+        }
+
+        if full_response.trim().is_empty() {
+            Err(anyhow::anyhow!("Empty response from Pollinations streaming vision API"))
         } else {
-            Ok(response_text.trim().to_string())
+            info!("Vision streaming completed. Total response length: {}", full_response.len());
+            Ok(full_response.trim().to_string())
         }
     }
 

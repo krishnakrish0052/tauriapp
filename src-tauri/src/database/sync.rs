@@ -1,4 +1,4 @@
-use super::{DatabaseManager, DatabaseError, Result};
+use super::{DatabaseManager, Result};
 use super::models::*;
 use log::{info, error, warn};
 use tokio::time::{Duration, interval};

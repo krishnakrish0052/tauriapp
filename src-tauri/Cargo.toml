@@ -21,6 +21,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = ["codegen"] }
 
 [dependencies]
+screenshots = "0.4"
+image = "0.24"
 tauri = { version = "2", features = [ "tray-icon", "devtools"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
@@ -56,17 +58,27 @@ lazy_static = "1.4.0"
 rustls = "0.21"
 tokio-rustls = "0.24"
 regex = "1.0"
+# OCR dependencies (optional - can be enabled later)
+# tesseract = "0.13"  # Requires system installation
+# rimage = "0.9"
 
 tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
 url = "2.4"
 urlencoding = "2.1"
 
-[dependencies.windows-sys]
-version = "0.52.0"
-features = [
+windows-sys = { version = "0.52.0", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
-]
+    "Win32_UI_Accessibility",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Memory",
+    "Win32_System_Com",
+    "Win32_System_DataExchange",
+    "Win32_System_Ole",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+] }
+winapi = { version = "0.3", features = ["winuser", "oleauto", "combaseapi"] }
 
 # Windows-specific dependencies for WASAPI loopback
 [target.'cfg(windows)'.dependencies]

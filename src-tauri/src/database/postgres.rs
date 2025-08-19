@@ -1,8 +1,8 @@
-use tokio_postgres::{Client, NoTls, Error as PgError};
+use tokio_postgres::NoTls;
 use deadpool_postgres::{Config, Pool, Runtime};
 use uuid::Uuid;
-use chrono::{DateTime, Utc, NaiveDateTime};
-use log::{info, error, warn};
+use chrono::Utc;
+use log::{info, error};
 use std::str::FromStr;
 use serde::{Serialize, Deserialize};
 

@@ -9,11 +9,13 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 pub mod audio;
+mod screenshot;
 mod websocket;
 mod openai;
 mod pollinations;
 mod wasapi_loopback;
 pub mod realtime_transcription;
+pub mod accessibility_reader; // Windows Accessibility API text reader
 
 // New Phase 2 modules
 pub mod database;
@@ -22,7 +24,7 @@ pub mod database;
 
 use openai::{OpenAIClient, InterviewContext};
 use pollinations::{PollinationsClient, AIProvider};
-use database::shared::*; // Import shared database types and functions
+// use database::shared::*; // Import shared database types and functions - commented out to avoid unused import warning
 
 pub fn run() -> Result<()> {
     // Load environment variables from .env file
@@ -70,6 +72,24 @@ pub fn run() -> Result<()> {
             pollinations_generate_answer,
             pollinations_generate_answer_streaming,
             pollinations_generate_answer_post_streaming,
+            // Screenshot and AI Analysis commands
+            debug_screenshot_info,
+            capture_screenshot_cmd,
+            analyze_screen_with_ai,
+            analyze_screen_with_ai_streaming,
+            // Windows Accessibility API commands (Primary text reading solution)
+            accessibility_reader::read_text_from_applications,
+            accessibility_reader::read_text_from_focused_window,
+            // Real-time monitoring commands
+            accessibility_reader::start_realtime_monitoring,
+            accessibility_reader::stop_realtime_monitoring,
+            accessibility_reader::get_monitoring_status,
+            // Hybrid approach commands
+            accessibility_reader::extract_text_hybrid_approach,
+            accessibility_reader::update_accessibility_config,
+            // Accessibility-based AI analysis commands
+            analyze_applications_with_ai_streaming,
+            analyze_focused_window_with_ai_streaming,
             // Session management commands (existing)
             connect_to_web_session,
             activate_web_session,
@@ -96,7 +116,11 @@ pub fn run() -> Result<()> {
             database::postgres::finalize_session_duration,
             database::postgres::mark_session_started,
             // Window management
-            resize_main_window
+            resize_main_window,
+            move_window_relative,
+            resize_window_scale,
+            show_main_window,
+            hide_main_window
         ])
         .manage(AppState::new())
         .setup(|app| {
@@ -149,6 +173,10 @@ pub fn run() -> Result<()> {
             // Initialize the real-time transcription service
             realtime_transcription::init_transcription_service(app.handle().clone());
             info!("✅ Real-time transcription service initialized");
+            
+            // Initialize the real-time accessibility monitoring service
+            accessibility_reader::init_realtime_monitoring(app.handle().clone());
+            info!("✅ Real-time accessibility monitoring service initialized");
             
             // Get the main window and set capture protection
             match app.get_webview_window("main") {
@@ -1793,3 +1821,1110 @@ fn resize_main_window(app_handle: AppHandle, width: u32, height: u32) -> Result<
         Err("Main window not found".to_string())
     }
 }
+
+// ===== NEW WINDOW MANAGEMENT COMMANDS FOR HOTKEYS =====
+
+#[derive(Serialize, Deserialize)]
+struct MoveWindowPayload {
+    #[serde(rename = "deltaX")]
+    delta_x: i32,
+    #[serde(rename = "deltaY")]
+    delta_y: i32,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ResizeWindowPayload {
+    #[serde(rename = "scaleFactor")]
+    scale_factor: f64,
+}
+
+#[tauri::command]
+fn move_window_relative(app_handle: AppHandle, delta_x: i32, delta_y: i32) -> Result<String, String> {
+    info!("📍 Moving main window by: ({}, {})", delta_x, delta_y);
+    
+    if let Some(window) = app_handle.get_webview_window("main") {
+        // Get current position
+        let current_position = window.outer_position().map_err(|e| {
+            error!("❌ Failed to get current window position: {}", e);
+            e.to_string()
+        })?;
+        
+        // Calculate new position
+        let new_x = current_position.x + delta_x;
+        let new_y = current_position.y + delta_y;
+        
+        info!("📊 Window move: current=({}, {}), delta=({}, {}), new=({}, {})", 
+              current_position.x, current_position.y, delta_x, delta_y, new_x, new_y);
+        
+        match window.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
+            x: new_x,
+            y: new_y,
+        })) {
+            Ok(_) => {
+                info!("✅ Main window successfully moved to: ({}, {})", new_x, new_y);
+                
+                // Verify the move worked
+                match window.outer_position() {
+                    Ok(new_position) => {
+                        info!("🔍 Post-move verification: actual new position is ({}, {})", new_position.x, new_position.y);
+                        Ok(format!("Window moved to ({}, {})", new_position.x, new_position.y))
+                    }
+                    Err(e) => {
+                        warn!("❌ Failed to verify window move: {}", e);
+                        Ok(format!("Window move attempted to ({}, {})", new_x, new_y))
+                    }
+                }
+            }
+            Err(e) => {
+                error!("❌ Failed to move main window: {}", e);
+                Err(format!("Failed to move main window: {}", e))
+            }
+        }
+    } else {
+        error!("❌ Main window not found for move");
+        Err("Main window not found".to_string())
+    }
+}
+
+#[tauri::command]
+fn resize_window_scale(app_handle: AppHandle, scale_factor: f64) -> Result<String, String> {
+    info!("📏 Scaling main window by factor: {}", scale_factor);
+    
+    if let Some(window) = app_handle.get_webview_window("main") {
+        // Get current size
+        let current_size = window.outer_size().map_err(|e| {
+            error!("❌ Failed to get current window size: {}", e);
+            e.to_string()
+        })?;
+        
+        // Calculate new size based on scale factor
+        // Start with a base size (can be current size or a reference size)
+        let base_width = 400.0; // Reference width
+        let base_height = 600.0; // Reference height
+        
+        let new_width = (base_width * scale_factor) as u32;
+        let new_height = (base_height * scale_factor) as u32;
+        
+        // Ensure minimum size
+        let min_width = 200;
+        let min_height = 300;
+        let final_width = new_width.max(min_width);
+        let final_height = new_height.max(min_height);
+        
+        info!("📊 Window scale: current={}x{}, scale={}, base={}x{}, new={}x{}, final={}x{}", 
+              current_size.width, current_size.height, scale_factor, 
+              base_width as u32, base_height as u32, new_width, new_height, final_width, final_height);
+        
+        match window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+            width: final_width,
+            height: final_height,
+        })) {
+            Ok(_) => {
+                info!("✅ Main window successfully scaled to: {}x{} (scale: {})", final_width, final_height, scale_factor);
+                
+                // Verify the resize worked
+                match window.outer_size() {
+                    Ok(new_size) => {
+                        info!("🔍 Post-scale verification: actual new size is {}x{}", new_size.width, new_size.height);
+                        Ok(format!("Window scaled to {}x{} ({}%)", new_size.width, new_size.height, (scale_factor * 100.0) as u32))
+                    }
+                    Err(e) => {
+                        warn!("❌ Failed to verify window scale: {}", e);
+                        Ok(format!("Window scale attempted: {}x{}", final_width, final_height))
+                    }
+                }
+            }
+            Err(e) => {
+                error!("❌ Failed to scale main window: {}", e);
+                Err(format!("Failed to scale main window: {}", e))
+            }
+        }
+    } else {
+        error!("❌ Main window not found for scale");
+        Err("Main window not found".to_string())
+    }
+}
+
+#[tauri::command]
+fn show_main_window(app_handle: AppHandle) -> Result<String, String> {
+    info!("👁️ Showing main window...");
+    
+    if let Some(window) = app_handle.get_webview_window("main") {
+        match window.show() {
+            Ok(_) => {
+                info!("✅ Main window shown successfully");
+                // Also bring to front
+                if let Err(e) = window.set_focus() {
+                    warn!("⚠️ Failed to focus main window: {}", e);
+                }
+                Ok("Main window shown".to_string())
+            }
+            Err(e) => {
+                error!("❌ Failed to show main window: {}", e);
+                Err(format!("Failed to show main window: {}", e))
+            }
+        }
+    } else {
+        error!("❌ Main window not found for show");
+        Err("Main window not found".to_string())
+    }
+}
+
+#[tauri::command]
+fn hide_main_window(app_handle: AppHandle) -> Result<String, String> {
+    info!("🙈 Hiding main window...");
+    
+    if let Some(window) = app_handle.get_webview_window("main") {
+        match window.hide() {
+            Ok(_) => {
+                info!("✅ Main window hidden successfully");
+                Ok("Main window hidden".to_string())
+            }
+            Err(e) => {
+                error!("❌ Failed to hide main window: {}", e);
+                Err(format!("Failed to hide main window: {}", e))
+            }
+        }
+    } else {
+        error!("❌ Main window not found for hide");
+        Err("Main window not found".to_string())
+    }
+}
+
+// Screenshot and AI Analysis Commands
+
+#[derive(Serialize, Deserialize)]
+struct ScreenshotResponse {
+    screenshot: String, // Base64 encoded image
+    width: u32,
+    height: u32,
+}
+
+#[tauri::command]
+fn debug_screenshot_info() -> Result<String, String> {
+    info!("🔍 Debug screenshot info...");
+    
+    match screenshot::capture_screenshot() {
+        Ok(base64_image) => {
+            Ok(format!("Screenshot captured successfully, base64 length: {}", base64_image.len()))
+        }
+        Err(e) => {
+            error!("❌ Debug screenshot failed: {}", e);
+            Err(format!("Debug screenshot failed: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+fn capture_screenshot_cmd() -> Result<ScreenshotResponse, String> {
+    info!("📸 Capturing screenshot for AI analysis...");
+    
+    match screenshot::capture_screenshot() {
+        Ok(base64_image) => {
+            // For now, we'll estimate dimensions from the base64 size
+            // In a real implementation, we could get actual dimensions from the screenshot module
+            Ok(ScreenshotResponse {
+                screenshot: base64_image,
+                width: 1920, // Default assumption
+                height: 1080, // Default assumption
+            })
+        }
+        Err(e) => {
+            error!("❌ Failed to capture screenshot: {}", e);
+            Err(format!("Failed to capture screenshot: {}", e))
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct AnalyzeScreenWithAiPayload {
+    model: String,
+    provider: String, // "openai" or "pollinations"
+    company: Option<String>,
+    position: Option<String>,
+    job_description: Option<String>,
+    system_prompt: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct AiAnalysisResult {
+    generated_question: String,
+    analysis: String,
+    confidence: f32,
+}
+
+#[tauri::command]
+async fn analyze_screen_with_ai(
+    payload: AnalyzeScreenWithAiPayload,
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+) -> Result<String, String> {
+    info!("[SCREEN_ANALYSIS] This command has been disabled. Please use the Windows Accessibility API analysis instead.");
+    
+    // Redirect to the accessibility-based analysis
+    match analyze_applications_with_ai_streaming(payload, state, app_handle).await {
+        Ok(result) => Ok(format!("Generated question: {}", result.generated_question)),
+        Err(e) => Err(e),
+    }
+}
+
+// New streaming version of screen analysis that shows progress in real-time
+#[tauri::command]
+async fn analyze_screen_with_ai_streaming(
+    payload: AnalyzeScreenWithAiPayload,
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+) -> Result<AiAnalysisResult, String> {
+    info!("[SCREEN_ANALYSIS_STREAMING] Starting screen capture and AI analysis with streaming...");
+    
+    // Show the AI response window before starting
+    if let Err(e) = show_ai_response_window(app_handle.clone()) {
+        warn!("Failed to show AI response window: {}", e);
+    }
+    
+    // First, capture the screenshot
+    let screenshot_data = match screenshot::capture_screenshot() {
+        Ok(data) => data,
+        Err(e) => {
+            error!("[ERROR] Failed to capture screenshot: {}", e);
+            
+            // Send error to UI
+            let error_data = AiResponseData {
+                message_type: "error".to_string(),
+                text: None,
+                error: Some(format!("Failed to capture screenshot: {}", e)),
+            };
+            let _ = send_ai_response_data(app_handle, error_data).await;
+            
+            return Err(format!("Failed to capture screenshot: {}", e));
+        }
+    };
+    
+    info!("[SUCCESS] Screenshot captured, size: {} bytes", screenshot_data.len());
+    
+    // Send initial status to UI
+    let status_data = AiResponseData {
+        message_type: "stream-token".to_string(),
+        text: Some("[ANALYSIS] Screenshot captured successfully, analyzing content...".to_string()),
+        error: None,
+    };
+    let _ = send_ai_response_data(app_handle.clone(), status_data).await;
+    
+    // Determine which AI provider to use
+    let provider = AIProvider::from_str(&payload.provider)
+        .unwrap_or(AIProvider::OpenAI);
+    
+    let mut context = {
+        let context_guard = state.interview_context.lock();
+        context_guard.clone()
+    };
+    
+    // Update context with payload data
+    if let Some(company) = payload.company {
+        context.company = Some(company);
+    }
+    if let Some(position) = payload.position {
+        context.position = Some(position);
+    }
+    if let Some(job_description) = payload.job_description {
+        context.job_description = Some(job_description);
+    }
+    
+    // Build AI prompt for screen analysis and question generation
+    let system_prompt = payload.system_prompt.unwrap_or_else(|| {
+        "You are an expert technical interviewer analyzing a screenshot of a user's screen. Look at the visible content carefully - this might include:
+        - Code in editors (analyze programming concepts, syntax, patterns)
+        - Documentation or technical articles (focus on concepts being studied)
+        - Applications or interfaces (understand the technical context)
+        - Text content (generate questions about the subject matter)
+        - Development environments (ask about tools, workflows, best practices)
+        
+        Generate a thoughtful interview question that tests understanding of what's actually visible on screen. Make the question specific to the content shown, not generic.".to_string()
+    });
+    
+    let analysis_prompt = format!(
+        "{}\n\nAnalyze this screenshot and generate a specific interview question based on what you see. Your response MUST be valid JSON in exactly this format (no additional text):\n\n{{\n  \"generated_question\": \"Your specific interview question about the visible content\",\n  \"analysis\": \"Brief explanation of why this question tests understanding of what's shown in the screenshot\",\n  \"confidence\": 0.85\n}}\n\nOnly return the JSON object, nothing else.",
+        system_prompt
+    );
+    
+    // Initialize streaming state and timing
+    let stream_start_time = std::time::Instant::now();
+    info!("[STREAMING] Starting AI analysis with streaming for screen content...");
+    let _ = app_handle.emit("ai-stream-start", ());
+    
+    // Stream the analysis with callback to update UI progressively
+    let app_handle_clone = app_handle.clone();
+    let result = match provider {
+        AIProvider::OpenAI => {
+            info!("[AI_PROVIDER] Using OpenAI for streaming screenshot analysis");
+            state.ensure_openai_client()?;
+            
+            let client = {
+                let client_guard = state.openai_client.lock();
+                client_guard.as_ref().unwrap().clone()
+            };
+            
+            let model = openai::OpenAIModel::from_string(&payload.model)
+                .map_err(|e| format!("Invalid OpenAI model: {}", e))?;
+            
+            // For OpenAI, we'll simulate streaming by sending status updates
+            let status_update = AiResponseData {
+                message_type: "stream-token".to_string(),
+                text: Some("\n[ANALYSIS] Sending screenshot to OpenAI for analysis...".to_string()),
+                error: None,
+            };
+            let _ = send_ai_response_data(app_handle_clone.clone(), status_update).await;
+            
+            // Use vision analysis
+            client.analyze_screenshot_with_vision(&screenshot_data, &analysis_prompt, &context, model)
+                .await
+                .map_err(|e| e.to_string())
+        }
+        AIProvider::Pollinations => {
+            info!("[AI_PROVIDER] Using Pollinations for streaming screenshot analysis with model: {}", payload.model);
+            state.ensure_pollinations_client()?;
+            
+            let client = {
+                let client_guard = state.pollinations_client.lock();
+                client_guard.as_ref().unwrap().clone()
+            };
+            
+            let model = pollinations::PollinationsModel::from_string(&payload.model)
+                .map_err(|e| format!("Invalid Pollinations model: {}", e))?;
+            
+            // For Pollinations with streaming capability
+            let status_update = AiResponseData {
+                message_type: "stream-token".to_string(),
+                text: Some("\n[ANALYSIS] Connecting to Pollinations AI for streaming analysis...".to_string()),
+                error: None,
+            };
+            let _ = send_ai_response_data(app_handle_clone.clone(), status_update).await;
+            
+            // Use streaming vision analysis for Pollinations
+            match client.analyze_screenshot_with_vision_streaming(&screenshot_data, &analysis_prompt, &context, model.clone(), 
+                move |token: &str| {
+                    info!("[STREAM_TOKEN] Received vision analysis token: '{}'", token.chars().take(50).collect::<String>());
+                    
+                    // Send streaming token to UI
+                    let data = AiResponseData {
+                        message_type: "stream-token".to_string(),
+                        text: Some(token.to_string()),
+                        error: None,
+                    };
+                    let app_handle_for_token = app_handle_clone.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = send_ai_response_data(app_handle_for_token, data).await {
+                            error!("Failed to send streaming token to UI: {}", e);
+                        }
+                    });
+                }
+            ).await {
+                Ok(result) => Ok(result),
+                Err(_) => {
+                    // Fallback to non-streaming analysis if streaming fails
+                    info!("[FALLBACK] Streaming not available, using regular vision analysis");
+                    client.analyze_screenshot_with_vision(&screenshot_data, &analysis_prompt, &context, model)
+                        .await
+                        .map_err(|e| e.to_string())
+                }
+            }
+        }
+    }?;
+    
+    let elapsed_time = stream_start_time.elapsed();
+    info!("[SUCCESS] AI analysis completed. Response length: {}, elapsed time: {:.2?}", result.len(), elapsed_time);
+    
+    // Try to parse the AI response as JSON
+    let analysis_result = match serde_json::from_str::<AiAnalysisResult>(&result) {
+        Ok(parsed) => {
+            info!("[SUCCESS] Successfully parsed JSON response from AI");
+            info!("[DEBUG] Parsed question: '{}'", parsed.generated_question);
+            info!("[DEBUG] Parsed analysis: '{}'", parsed.analysis);
+            info!("[DEBUG] Parsed confidence: {}", parsed.confidence);
+            parsed
+        },
+        Err(parse_error) => {
+            error!("[ERROR] Failed to parse AI response as JSON: {}", parse_error);
+            error!("[DEBUG] Full raw AI response: '{}'", result);
+            
+            // Try to extract question from the text response
+            let extracted_question = extract_question_from_text(&result);
+            let extracted_analysis = extract_analysis_from_text(&result);
+            let extracted_confidence = extract_confidence_from_text(&result);
+            
+            info!("[DEBUG] Extracted question: '{}'", extracted_question);
+            info!("[DEBUG] Extracted analysis: '{}'", extracted_analysis);
+            info!("[DEBUG] Extracted confidence: {}", extracted_confidence);
+            
+            AiAnalysisResult {
+                generated_question: extracted_question,
+                analysis: extracted_analysis,
+                confidence: extracted_confidence,
+            }
+        }
+    };
+    
+    // Send final formatted result to UI
+    let formatted_response = format!(
+        "\n[QUESTION] Generated Interview Question:\n\n🎯 {}\n\n[ANALYSIS] Analysis:\n\n📋 {}\n\n[CONFIDENCE] Confidence: {:.0}%\n\nGenerated using {} {} via {}",
+        analysis_result.generated_question,
+        analysis_result.analysis,
+        analysis_result.confidence * 100.0,
+        payload.provider.to_uppercase(),
+        payload.model,
+        if payload.provider.to_lowercase() == "pollinations" { "Pollinations" } else { "OpenAI" }
+    );
+    
+    let completion_data = AiResponseData {
+        message_type: "complete".to_string(),
+        text: Some(formatted_response),
+        error: None,
+    };
+    let _ = send_ai_response_data(app_handle.clone(), completion_data).await;
+    
+    // Emit completion event
+    let _ = app_handle.emit("ai-stream-complete", &analysis_result);
+    
+    info!("[SUCCESS] AI analysis completed: {}", analysis_result.generated_question);
+    
+    // Store the generated question in the database (same as manual questions)
+    let question_text = &analysis_result.generated_question;
+    if !question_text.is_empty() {
+        // Try to store the question via QA Storage Manager if available
+        let storage_payload = serde_json::json!({
+            "questionText": question_text,
+            "questionNumber": 1,
+            "category": "ai_generated",
+            "difficultyLevel": "medium",
+            "source": "screen_analysis",
+            "metadata": {
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "aiProvider": payload.provider,
+                "aiModel": payload.model,
+                "confidence": analysis_result.confidence,
+                "analysisType": "screenshot",
+                "expectedDuration": 5
+            }
+        });
+        
+        // Emit event to frontend to store the question via QA Storage Manager
+        if let Err(e) = app_handle.emit("store-ai-question", storage_payload) {
+            error!("[ERROR] Failed to emit store-ai-question event: {}", e);
+        } else {
+            info!("[SUCCESS] AI-generated question storage event emitted");
+        }
+    }
+    
+    Ok(analysis_result)
+}
+
+// Accessibility-based AI Analysis Commands (Primary Solution)
+
+/// Analyze all target applications using Windows Accessibility API with AI streaming
+#[tauri::command]
+async fn analyze_applications_with_ai_streaming(
+    payload: AnalyzeScreenWithAiPayload,
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+) -> Result<AiAnalysisResult, String> {
+    info!("[ACCESSIBILITY_STREAMING] Starting accessibility-based analysis of all target applications...");
+    
+    // Show the AI response window before starting
+    if let Err(e) = show_ai_response_window(app_handle.clone()) {
+        warn!("Failed to show AI response window: {}", e);
+    }
+    
+    // Send initial status to UI
+    let status_data = AiResponseData {
+        message_type: "stream-token".to_string(),
+        text: Some("[ACCESSIBILITY] Starting real-time text reading from applications...".to_string()),
+        error: None,
+    };
+    let _ = send_ai_response_data(app_handle.clone(), status_data).await;
+    
+    // Read text from all target applications using Accessibility API
+    let accessibility_results = match accessibility_reader::read_text_from_applications().await {
+        Ok(results) => results,
+        Err(e) => {
+            error!("❌ [ACCESSIBILITY] Failed to read text from applications: {}", e);
+            
+            // Send error to UI
+            let error_data = AiResponseData {
+                message_type: "error".to_string(),
+                text: None,
+                error: Some(format!("Failed to read text from applications: {}", e)),
+            };
+            let _ = send_ai_response_data(app_handle, error_data).await;
+            
+            return Err(format!("Failed to read text from applications: {}", e));
+        }
+    };
+    
+    info!("📊 [ACCESSIBILITY] Found {} text blocks from target applications", accessibility_results.len());
+    
+    // Check if we found any meaningful text
+    if accessibility_results.is_empty() {
+        warn!("⚠️ [ACCESSIBILITY] No text found in target applications");
+        
+        let no_text_data = AiResponseData {
+            message_type: "stream-token".to_string(),
+            text: Some("\n[ACCESSIBILITY] No readable text found in target applications (Teams, Zoom, Chrome, etc.). Make sure the applications are open and contain visible text.".to_string()),
+            error: None,
+        };
+        let _ = send_ai_response_data(app_handle.clone(), no_text_data).await;
+        
+        // Return a default result
+        let default_result = AiAnalysisResult {
+            generated_question: "Can you describe your experience with video conferencing tools and remote collaboration?".to_string(),
+            analysis: "No text was found in target applications, so this is a general question about remote work experience.".to_string(),
+            confidence: 0.3,
+        };
+        
+        // Send completion
+        let completion_data = AiResponseData {
+            message_type: "complete".to_string(),
+            text: Some(format!("\n[QUESTION] Generated Question (No accessibility text found):\n\n🎯 {}\n\n[ANALYSIS] {}\n\n[CONFIDENCE] {:.0}%", 
+                default_result.generated_question, default_result.analysis, default_result.confidence * 100.0)),
+            error: None,
+        };
+        let _ = send_ai_response_data(app_handle.clone(), completion_data).await;
+        
+        return Ok(default_result);
+    }
+    
+    // Find the most relevant text (prioritize questions and meaningful content)
+    let best_text = find_best_accessibility_text(&accessibility_results);
+    
+    info!("✅ [ACCESSIBILITY] Selected best text from {}: '{}'", 
+          best_text.source_app, 
+          best_text.text.chars().take(100).collect::<String>());
+    
+    // Send accessibility results to UI
+    let accessibility_status_data = AiResponseData {
+        message_type: "stream-token".to_string(),
+        text: Some(format!(
+            "\n[ACCESSIBILITY] ✅ Text reading complete!\n📊 Found {} text blocks from target applications\n🎯 Best source: {} ({}% confidence)\n📝 Selected text: {}...\n\n[AI] Now generating interview question based on extracted text...", 
+            accessibility_results.len(),
+            best_text.source_app,
+            (best_text.confidence * 100.0) as u32,
+            best_text.text.chars().take(80).collect::<String>()
+        )),
+        error: None,
+    };
+    let _ = send_ai_response_data(app_handle.clone(), accessibility_status_data).await;
+    
+    // Generate AI analysis using the extracted text
+    generate_ai_analysis_from_text(
+        &best_text.text,
+        &format!("Windows Accessibility API from {}", best_text.source_app),
+        payload,
+        state,
+        app_handle,
+    ).await
+}
+
+/// Analyze focused window using Windows Accessibility API with AI streaming
+#[tauri::command]
+async fn analyze_focused_window_with_ai_streaming(
+    payload: AnalyzeScreenWithAiPayload,
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+) -> Result<AiAnalysisResult, String> {
+    info!("[ACCESSIBILITY_STREAMING] Starting accessibility-based analysis of focused window...");
+    
+    // Show the AI response window before starting
+    if let Err(e) = show_ai_response_window(app_handle.clone()) {
+        warn!("Failed to show AI response window: {}", e);
+    }
+    
+    // Send initial status to UI
+    let status_data = AiResponseData {
+        message_type: "stream-token".to_string(),
+        text: Some("[ACCESSIBILITY] Reading text from currently focused window...".to_string()),
+        error: None,
+    };
+    let _ = send_ai_response_data(app_handle.clone(), status_data).await;
+    
+    // Read text from focused window using Accessibility API
+    let accessibility_result = match accessibility_reader::read_text_from_focused_window().await {
+        Ok(Some(result)) => result,
+        Ok(None) => {
+            warn!("⚠️ [ACCESSIBILITY] No text found in focused window");
+            
+            let no_text_data = AiResponseData {
+                message_type: "stream-token".to_string(),
+                text: Some("\n[ACCESSIBILITY] No readable text found in the currently focused window. Try focusing on an application window with visible text content.".to_string()),
+                error: None,
+            };
+            let _ = send_ai_response_data(app_handle.clone(), no_text_data).await;
+            
+            // Return a default result
+            let default_result = AiAnalysisResult {
+                generated_question: "Can you describe what you're currently working on and the technologies involved?".to_string(),
+                analysis: "No text was found in the focused window, so this is a general question about current work.".to_string(),
+                confidence: 0.3,
+            };
+            
+            // Send completion
+            let completion_data = AiResponseData {
+                message_type: "complete".to_string(),
+                text: Some(format!("\n[QUESTION] Generated Question (No focused window text):\n\n🎯 {}\n\n[ANALYSIS] {}\n\n[CONFIDENCE] {:.0}%", 
+                    default_result.generated_question, default_result.analysis, default_result.confidence * 100.0)),
+                error: None,
+            };
+            let _ = send_ai_response_data(app_handle.clone(), completion_data).await;
+            
+            return Ok(default_result);
+        },
+        Err(e) => {
+            error!("❌ [ACCESSIBILITY] Failed to read text from focused window: {}", e);
+            
+            // Send error to UI
+            let error_data = AiResponseData {
+                message_type: "error".to_string(),
+                text: None,
+                error: Some(format!("Failed to read text from focused window: {}", e)),
+            };
+            let _ = send_ai_response_data(app_handle, error_data).await;
+            
+            return Err(format!("Failed to read text from focused window: {}", e));
+        }
+    };
+    
+    info!("✅ [ACCESSIBILITY] Text extracted from focused window {}: '{}'", 
+          accessibility_result.source_app, 
+          accessibility_result.text.chars().take(100).collect::<String>());
+    
+    // Send accessibility results to UI
+    let accessibility_status_data = AiResponseData {
+        message_type: "stream-token".to_string(),
+        text: Some(format!(
+            "\n[ACCESSIBILITY] ✅ Text reading complete!\n🎯 Source: {} ({}% confidence)\n📝 Extracted text: {}...\n\n[AI] Now generating interview question based on extracted text...", 
+            accessibility_result.source_app,
+            (accessibility_result.confidence * 100.0) as u32,
+            accessibility_result.text.chars().take(80).collect::<String>()
+        )),
+        error: None,
+    };
+    let _ = send_ai_response_data(app_handle.clone(), accessibility_status_data).await;
+    
+    // Generate AI analysis using the extracted text
+    generate_ai_analysis_from_text(
+        &accessibility_result.text,
+        &format!("Windows Accessibility API from focused window: {}", accessibility_result.source_app),
+        payload,
+        state,
+        app_handle,
+    ).await
+}
+
+/// Helper function to find the best accessibility text result
+fn find_best_accessibility_text(results: &[accessibility_reader::AccessibilityTextResult]) -> &accessibility_reader::AccessibilityTextResult {
+    // Prioritize results that look like questions
+    if let Some(question_result) = results.iter().find(|r| r.is_potential_question) {
+        info!("📝 [ACCESSIBILITY] Found potential question text from {}", question_result.source_app);
+        return question_result;
+    }
+    
+    // Prioritize results with higher confidence
+    if let Some(high_confidence_result) = results.iter().max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap_or(std::cmp::Ordering::Equal)) {
+        info!("📊 [ACCESSIBILITY] Using highest confidence text from {}", high_confidence_result.source_app);
+        return high_confidence_result;
+    }
+    
+    // Fallback to first result
+    &results[0]
+}
+
+/// Helper function to generate AI analysis from extracted text
+async fn generate_ai_analysis_from_text(
+    extracted_text: &str,
+    source_description: &str,
+    payload: AnalyzeScreenWithAiPayload,
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+) -> Result<AiAnalysisResult, String> {
+    // Determine AI provider
+    let provider = AIProvider::from_str(&payload.provider)
+        .unwrap_or(AIProvider::OpenAI);
+    
+    let mut context = {
+        let context_guard = state.interview_context.lock();
+        context_guard.clone()
+    };
+    
+    // Update context with payload data
+    if let Some(company) = payload.company {
+        context.company = Some(company);
+    }
+    if let Some(position) = payload.position {
+        context.position = Some(position);
+    }
+    if let Some(job_description) = payload.job_description {
+        context.job_description = Some(job_description);
+    }
+    
+    // Build AI prompt using extracted text
+    let system_prompt = format!(
+        "You are an expert technical interviewer. I have extracted the following text from an application using {}:\n\n---\n{}\n---\n\nBased on this extracted text, generate a specific interview question that tests understanding of the visible content. The question should be relevant to the context and help assess the candidate's technical knowledge or experience.",
+        source_description,
+        extracted_text
+    );
+    
+    let analysis_prompt = format!(
+        "{}\n\nYour response MUST be valid JSON in exactly this format:\n{{\n  \"generated_question\": \"Your specific interview question based on the extracted text\",\n  \"analysis\": \"Brief explanation of why this question tests understanding of the extracted content\",\n  \"confidence\": 0.85\n}}\n\nOnly return the JSON object, nothing else.",
+        system_prompt
+    );
+    
+    // Initialize streaming state and timing
+    let stream_start_time = std::time::Instant::now();
+    info!("[AI_STREAMING] Starting AI analysis with extracted accessibility text...");
+    let _ = app_handle.emit("ai-stream-start", ());
+    
+    // Stream AI analysis
+    let app_handle_clone = app_handle.clone();
+    let result = match provider {
+        AIProvider::OpenAI => {
+            info!("[AI_PROVIDER] Using OpenAI for accessibility-based analysis");
+            state.ensure_openai_client()?;
+            
+            let client = {
+                let client_guard = state.openai_client.lock();
+                client_guard.as_ref().unwrap().clone()
+            };
+            
+            let model = openai::OpenAIModel::from_string(&payload.model)
+                .map_err(|e| format!("Invalid OpenAI model: {}", e))?;
+            
+            // For OpenAI, simulate streaming with status updates
+            let status_update = AiResponseData {
+                message_type: "stream-token".to_string(),
+                text: Some("\n[AI] Sending extracted text to OpenAI for analysis...".to_string()),
+                error: None,
+            };
+            let _ = send_ai_response_data(app_handle_clone.clone(), status_update).await;
+            
+            // Use text-based analysis since we have accessibility text
+            client.generate_answer(&analysis_prompt, &context, model)
+                .await
+                .map_err(|e| e.to_string())
+        },
+        AIProvider::Pollinations => {
+            info!("[AI_PROVIDER] Using Pollinations for streaming accessibility-based analysis with model: {}", payload.model);
+            state.ensure_pollinations_client()?;
+            
+            let client = {
+                let client_guard = state.pollinations_client.lock();
+                client_guard.as_ref().unwrap().clone()
+            };
+            
+            let model = pollinations::PollinationsModel::from_string(&payload.model)
+                .map_err(|e| format!("Invalid Pollinations model: {}", e))?;
+            
+            // Status update for Pollinations
+            let status_update = AiResponseData {
+                message_type: "stream-token".to_string(),
+                text: Some("\n[AI] Connecting to Pollinations AI for streaming analysis of accessibility text...".to_string()),
+                error: None,
+            };
+            let _ = send_ai_response_data(app_handle_clone.clone(), status_update).await;
+            
+            // Use streaming text analysis
+            client.generate_answer_streaming(
+                &analysis_prompt, 
+                &context, 
+                model,
+                move |token: &str| {
+                    info!("[STREAM_TOKEN] Received accessibility analysis token: '{}'", token.chars().take(50).collect::<String>());
+                    
+                    // Send streaming token to UI
+                    let data = AiResponseData {
+                        message_type: "stream-token".to_string(),
+                        text: Some(token.to_string()),
+                        error: None,
+                    };
+                    let app_handle_for_token = app_handle_clone.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = send_ai_response_data(app_handle_for_token, data).await {
+                            error!("Failed to send streaming token to UI: {}", e);
+                        }
+                    });
+                }
+            ).await.map_err(|e| e.to_string())
+        }
+    }?;
+    
+    let elapsed_time = stream_start_time.elapsed();
+    info!("[SUCCESS] Accessibility-based AI analysis completed. Response length: {}, elapsed time: {:.2?}", result.len(), elapsed_time);
+    
+    // Try to parse the AI response as JSON
+    let analysis_result = match serde_json::from_str::<AiAnalysisResult>(&result) {
+        Ok(parsed) => {
+            info!("[SUCCESS] Successfully parsed JSON response from AI");
+            parsed
+        },
+        Err(parse_error) => {
+            info!("[WARNING] Failed to parse AI response as JSON: {}", parse_error);
+            info!("[DEBUG] Raw AI response: {}", result.chars().take(200).collect::<String>());
+            
+            // Try to extract question from the text response
+            let extracted_question = extract_question_from_text(&result);
+            let extracted_analysis = extract_analysis_from_text(&result);
+            let extracted_confidence = extract_confidence_from_text(&result);
+            
+            AiAnalysisResult {
+                generated_question: extracted_question,
+                analysis: extracted_analysis,
+                confidence: extracted_confidence,
+            }
+        }
+    };
+    
+    // Send final formatted result to UI
+    let formatted_response = format!(
+        "\n[QUESTION] Generated Interview Question (Accessibility API):\n\n🎯 {}\n\n[ANALYSIS] Analysis:\n\n📋 {}\n\n[CONFIDENCE] Confidence: {:.0}%\n\n[SOURCE] Text extracted using {}\n\nGenerated using {} {} with Windows Accessibility API",
+        analysis_result.generated_question,
+        analysis_result.analysis,
+        analysis_result.confidence * 100.0,
+        source_description,
+        payload.provider.to_uppercase(),
+        payload.model
+    );
+    
+    let completion_data = AiResponseData {
+        message_type: "complete".to_string(),
+        text: Some(formatted_response),
+        error: None,
+    };
+    let _ = send_ai_response_data(app_handle.clone(), completion_data).await;
+    
+    // Emit completion event
+    let _ = app_handle.emit("ai-stream-complete", &analysis_result);
+    
+    info!("[SUCCESS] Accessibility-based AI analysis completed: {}", analysis_result.generated_question);
+    
+    // Store the generated question
+    let question_text = &analysis_result.generated_question;
+    if !question_text.is_empty() {
+        let storage_payload = serde_json::json!({
+            "questionText": question_text,
+            "questionNumber": 1,
+            "category": "ai_generated",
+            "difficultyLevel": "medium",
+            "source": "accessibility_api_analysis",
+            "metadata": {
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "aiProvider": payload.provider,
+                "aiModel": payload.model,
+                "confidence": analysis_result.confidence,
+                "analysisType": "accessibility_api",
+                "expectedDuration": 5,
+                "sourceDescription": source_description,
+                "extractedTextLength": extracted_text.len()
+            }
+        });
+        
+        if let Err(e) = app_handle.emit("store-ai-question", storage_payload) {
+            error!("[ERROR] Failed to emit store-ai-question event: {}", e);
+        } else {
+            info!("[SUCCESS] Accessibility-based AI question storage event emitted");
+        }
+    }
+    
+    Ok(analysis_result)
+}
+
+// Helper function to extract a question from unstructured AI text
+fn extract_question_from_text(text: &str) -> String {
+    info!("[EXTRACT] Attempting to extract question from text: '{}'", text.chars().take(100).collect::<String>());
+    
+    if text.trim().is_empty() {
+        warn!("[EXTRACT] Empty text provided for question extraction");
+        return "Can you explain what you see in this technical context?".to_string();
+    }
+    
+    // Look for question patterns in the text
+    let lines: Vec<&str> = text.lines().collect();
+    
+    for line in &lines {
+        let trimmed = line.trim();
+        // Look for lines that end with a question mark or start with question indicators
+        if trimmed.ends_with('?') || 
+           trimmed.to_lowercase().starts_with("question:") ||
+           trimmed.to_lowercase().starts_with("q:") {
+            let question = trimmed
+                .strip_prefix("Question:")
+                .or_else(|| trimmed.strip_prefix("question:"))
+                .or_else(|| trimmed.strip_prefix("Q:"))
+                .or_else(|| trimmed.strip_prefix("q:"))
+                .unwrap_or(trimmed)
+                .trim();
+            if !question.is_empty() {
+                info!("[EXTRACT] Found question: '{}'", question);
+                return question.to_string();
+            }
+        }
+    }
+    
+    // If no specific question found, look for the first sentence that might be a question
+    for line in &lines {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() && (trimmed.contains("?") || trimmed.len() > 20) {
+            info!("[EXTRACT] Using first meaningful line as question: '{}'", trimmed);
+            return trimmed.to_string();
+        }
+    }
+    
+    // Try to find any meaningful content
+    let first_meaningful = lines.into_iter()
+        .find(|line| !line.trim().is_empty() && line.trim().len() > 5)
+        .map(|line| line.trim().to_string());
+        
+    if let Some(content) = first_meaningful {
+        info!("[EXTRACT] Using first meaningful content as fallback: '{}'", content);
+        // Convert to question format
+        if content.ends_with('.') {
+            format!("Can you explain: {}?", content.trim_end_matches('.'))
+        } else {
+            format!("Can you explain {}?", content)
+        }
+    } else {
+        warn!("[EXTRACT] No meaningful content found, using default question");
+        "Can you explain what you see in this technical context?".to_string()
+    }
+}
+
+// Helper function to extract analysis from unstructured AI text
+fn extract_analysis_from_text(text: &str) -> String {
+    info!("[EXTRACT] Attempting to extract analysis from text: '{}'", text.chars().take(100).collect::<String>());
+    
+    if text.trim().is_empty() {
+        warn!("[EXTRACT] Empty text provided for analysis extraction");
+        return "AI analysis based on screen content".to_string();
+    }
+    
+    let lines: Vec<&str> = text.lines().collect();
+    
+    // Look for analysis indicators
+    for line in &lines {
+        let trimmed = line.trim();
+        if trimmed.to_lowercase().starts_with("analysis:") ||
+           trimmed.to_lowercase().starts_with("explanation:") ||
+           trimmed.to_lowercase().starts_with("rationale:") {
+            let analysis = trimmed
+                .strip_prefix("Analysis:")
+                .or_else(|| trimmed.strip_prefix("analysis:"))
+                .or_else(|| trimmed.strip_prefix("Explanation:"))
+                .or_else(|| trimmed.strip_prefix("explanation:"))
+                .or_else(|| trimmed.strip_prefix("Rationale:"))
+                .or_else(|| trimmed.strip_prefix("rationale:"))
+                .unwrap_or(trimmed)
+                .trim();
+            if !analysis.is_empty() {
+                info!("[EXTRACT] Found analysis: '{}'", analysis);
+                return analysis.to_string();
+            }
+        }
+    }
+    
+    // If no specific analysis found, try to find meaningful content
+    let meaningful_lines: Vec<&str> = lines.iter()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty() && line.len() > 10)
+        .take(5)
+        .collect();
+    
+    if !meaningful_lines.is_empty() {
+        let combined_text = meaningful_lines.join(" ");
+        // Limit to reasonable length
+        let analysis_text = if combined_text.len() > 200 {
+            format!("{}...", combined_text.chars().take(200).collect::<String>())
+        } else {
+            combined_text
+        };
+        
+        info!("[EXTRACT] Using meaningful content as analysis: '{}'", analysis_text.chars().take(50).collect::<String>());
+        return analysis_text;
+    }
+    
+    // Final fallback using first 20 words
+    let text_words: Vec<&str> = text.split_whitespace().take(20).collect();
+    if !text_words.is_empty() {
+        let fallback_analysis = text_words.join(" ");
+        info!("[EXTRACT] Using first 20 words as fallback analysis: '{}'", fallback_analysis.chars().take(50).collect::<String>());
+        fallback_analysis
+    } else {
+        warn!("[EXTRACT] No meaningful content found, using default analysis");
+        "AI analysis based on screen content".to_string()
+    }
+}
+
+// Helper function to extract confidence from unstructured AI text
+fn extract_confidence_from_text(text: &str) -> f32 {
+    info!("[EXTRACT] Attempting to extract confidence from text: '{}'", text.chars().take(100).collect::<String>());
+    
+    if text.trim().is_empty() {
+        warn!("[EXTRACT] Empty text provided for confidence extraction");
+        return 0.75;
+    }
+    
+    // Look for confidence indicators in the text
+    let lower_text = text.to_lowercase();
+    
+    // Try to find numerical confidence values
+    if let Some(start) = lower_text.find("confidence:") {
+        let after_confidence = &text[start + 11..];
+        info!("[EXTRACT] Found confidence indicator, parsing: '{}'", after_confidence.chars().take(20).collect::<String>());
+        
+        if let Some(number_match) = regex::Regex::new(r"(\d+\.?\d*)")
+            .unwrap()
+            .find(after_confidence) {
+            if let Ok(conf) = number_match.as_str().parse::<f32>() {
+                let normalized_conf = if conf > 1.0 { conf / 100.0 } else { conf };
+                info!("[EXTRACT] Found numeric confidence: {} -> {}", conf, normalized_conf);
+                return normalized_conf;
+            }
+        }
+    }
+    
+    // Check for qualitative confidence indicators
+    if lower_text.contains("high confidence") || lower_text.contains("very confident") {
+        info!("[EXTRACT] Found high confidence indicator");
+        return 0.9;
+    } else if lower_text.contains("confident") {
+        info!("[EXTRACT] Found confident indicator");
+        return 0.8;
+    } else if lower_text.contains("moderate") {
+        info!("[EXTRACT] Found moderate confidence indicator");
+        return 0.7;
+    } else if lower_text.contains("low confidence") {
+        info!("[EXTRACT] Found low confidence indicator");
+        return 0.5;
+    }
+    
+    // Try to find any numerical value that might be confidence
+    if let Some(number_match) = regex::Regex::new(r"0\.(\d+)|0,(\d+)|\b(\d{1,2})%")
+        .unwrap()
+        .find(&lower_text) {
+        let match_str = number_match.as_str();
+        info!("[EXTRACT] Found potential confidence value: '{}'", match_str);
+        
+        if match_str.ends_with('%') {
+            if let Ok(conf) = match_str.trim_end_matches('%').parse::<f32>() {
+                let normalized = conf / 100.0;
+                info!("[EXTRACT] Parsed percentage confidence: {}% -> {}", conf, normalized);
+                return normalized;
+            }
+        } else if let Ok(conf) = match_str.replace(',', ".").parse::<f32>() {
+            let normalized = if conf > 1.0 { conf / 100.0 } else { conf };
+            info!("[EXTRACT] Parsed decimal confidence: {} -> {}", conf, normalized);
+            return normalized;
+        }
+    }
+    
+    // Default confidence
+    warn!("[EXTRACT] No confidence indicators found, using default: 0.75");
+    0.75
+}
+
+

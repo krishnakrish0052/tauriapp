@@ -383,6 +383,9 @@ class MockMateController {
         const sendBtn = document.getElementById('sendBtn');
         const questionInput = document.getElementById('questionInput');
 
+        // Setup hotkey system
+        await this.setupHotkeys();
+
         // Check if all elements exist
         console.log('🔍 Button elements check:', {
             customSelect: !!customSelect,
@@ -453,6 +456,374 @@ class MockMateController {
                 await this.sendManualQuestion();
             }
         });
+    }
+
+    // ===== COMPREHENSIVE HOTKEY SYSTEM =====
+    async setupHotkeys() {
+        console.log('⌨️ Setting up comprehensive hotkey system...');
+        
+        // Track current state for hotkey functionality
+        this.isWindowHidden = false;
+        this.currentWindowSize = 1.0; // Scale factor
+        this.windowMoveStep = 50; // pixels to move per keystroke
+        this.windowResizeStep = 0.1; // scale factor change per keystroke
+        
+        // Global keydown handler
+        document.addEventListener('keydown', async (e) => {
+            await this.handleHotkey(e);
+        });
+        
+        // Prevent default on special key combinations to avoid conflicts
+        document.addEventListener('keydown', (e) => {
+            if (e.shiftKey && ['KeyS', 'KeyZ', 'KeyX', 'KeyQ', 'KeyA', 'KeyI', 'KeyC', 'Home', 'End', 'PageUp', 'PageDown', 'Minus', 'Equal'].includes(e.code)) {
+                e.preventDefault();
+            }
+        });
+        
+        // Register system-wide hotkeys via Tauri backend
+        try {
+            await this.registerGlobalHotkeys();
+            console.log('✅ Global hotkeys registered successfully');
+        } catch (error) {
+            console.warn('⚠️ Failed to register global hotkeys:', error);
+            console.log('💡 Hotkeys will still work when app is focused');
+        }
+        
+        // Show hotkey help on first run
+        this.showHotkeyHelp();
+        
+        console.log('✅ Hotkey system setup complete');
+    }
+    
+    async handleHotkey(e) {
+        // Only handle Shift + key combinations and special keys
+        if (!e.shiftKey && !['Enter'].includes(e.key)) {
+            return;
+        }
+        
+        console.log(`🔥 Hotkey triggered: ${e.shiftKey ? 'Shift+' : ''}${e.code || e.key}`);
+        
+        try {
+            switch (e.code || e.key) {
+                // 1. System Sound Enable/Disable: Shift+S
+                case 'KeyS':
+                    if (e.shiftKey) {
+                        await this.toggleSystemSound();
+                        this.showNotification(`System Sound ${this.isSystemSoundOn ? 'Enabled' : 'Disabled'}`, 'success');
+                    }
+                    break;
+                    
+                // 2. AI Answer Trigger: Shift+Z 
+                case 'KeyZ':
+                    if (e.shiftKey) {
+                        await this.generateAnswer();
+                        this.showNotification('AI Answer Generation Triggered', 'info');
+                    }
+                    break;
+                    
+                // 3. Window Hide/Show: Shift+X
+                case 'KeyX':
+                    if (e.shiftKey) {
+                        await this.toggleWindowVisibility();
+                    }
+                    break;
+                    
+                // 4. Mic Enable/Disable: Shift+Q
+                case 'KeyQ':
+                    if (e.shiftKey) {
+                        await this.toggleMicrophone();
+                        this.showNotification(`Microphone ${this.isMicOn ? 'Enabled' : 'Disabled'}`, 'success');
+                    }
+                    break;
+                    
+                // 5. Analyze Screen: Shift+A
+                case 'KeyA':
+                    if (e.shiftKey) {
+                        await this.analyzeScreen();
+                        this.showNotification('Screen Analysis Started', 'info');
+                    }
+                    break;
+                    
+                // 6. Manual Question Entry: Shift+I
+                case 'KeyI':
+                    if (e.shiftKey) {
+                        this.focusQuestionInput();
+                        this.showNotification('Question Input Focused', 'info');
+                    }
+                    break;
+                    
+                // 7. Submit Question: Enter (handled in existing code but mentioned here)
+                case 'Enter':
+                    // Already handled in questionInput keypress event
+                    break;
+                    
+                // 8. Clear Listening Area: Shift+C
+                case 'KeyC':
+                    if (e.shiftKey) {
+                        this.clearTranscription();
+                        this.showNotification('Listening Area Cleared', 'success');
+                    }
+                    break;
+                    
+                // 9-13. Positioning and Resizing
+                // 10. Move Left: Shift+Home
+                case 'Home':
+                    if (e.shiftKey) {
+                        await this.moveWindow('left');
+                        this.showNotification('Window Moved Left', 'info');
+                    }
+                    break;
+                    
+                // 11. Move Right: Shift+End
+                case 'End':
+                    if (e.shiftKey) {
+                        await this.moveWindow('right');
+                        this.showNotification('Window Moved Right', 'info');
+                    }
+                    break;
+                    
+                // 12. Move Up: Shift+PageUp
+                case 'PageUp':
+                    if (e.shiftKey) {
+                        await this.moveWindow('up');
+                        this.showNotification('Window Moved Up', 'info');
+                    }
+                    break;
+                    
+                // 13. Move Down: Shift+PageDown
+                case 'PageDown':
+                    if (e.shiftKey) {
+                        await this.moveWindow('down');
+                        this.showNotification('Window Moved Down', 'info');
+                    }
+                    break;
+                    
+                // 14. Decrease Size: Shift+-
+                case 'Minus':
+                    if (e.shiftKey) {
+                        await this.resizeWindow('decrease');
+                        this.showNotification('Window Size Decreased', 'info');
+                    }
+                    break;
+                    
+                // 15. Increase Size: Shift++
+                case 'Equal': // + key without shift, but with shift it's +
+                    if (e.shiftKey) {
+                        await this.resizeWindow('increase');
+                        this.showNotification('Window Size Increased', 'info');
+                    }
+                    break;
+                    
+                default:
+                    // Unknown hotkey combination
+                    break;
+            }
+        } catch (error) {
+            console.error(`❌ Error handling hotkey ${e.code}:`, error);
+            this.showNotification(`Hotkey error: ${error.message}`, 'error');
+        }
+    }
+    
+    // Window visibility toggle
+    async toggleWindowVisibility() {
+        try {
+            if (this.isWindowHidden) {
+                await safeInvoke('show_main_window');
+                this.isWindowHidden = false;
+                this.showNotification('Window Shown', 'success');
+            } else {
+                await safeInvoke('hide_main_window');
+                this.isWindowHidden = true;
+                // Note: notification won't be visible since window is hidden
+                console.log('🔒 Window Hidden');
+            }
+        } catch (error) {
+            console.error('Failed to toggle window visibility:', error);
+            this.showNotification(`Window toggle failed: ${error.message}`, 'error');
+        }
+    }
+    
+    // Focus question input
+    focusQuestionInput() {
+        const questionInput = document.getElementById('questionInput');
+        if (questionInput) {
+            questionInput.focus();
+            questionInput.select(); // Select all text for easy replacement
+        }
+    }
+    
+    // Window movement
+    async moveWindow(direction) {
+        try {
+            const step = this.windowMoveStep;
+            let deltaX = 0, deltaY = 0;
+            
+            switch (direction) {
+                case 'left':
+                    deltaX = -step;
+                    break;
+                case 'right':
+                    deltaX = step;
+                    break;
+                case 'up':
+                    deltaY = -step;
+                    break;
+                case 'down':
+                    deltaY = step;
+                    break;
+            }
+            
+            // Try the backend command first
+            try {
+                await safeInvoke('move_window_relative', { deltaX, deltaY });
+            } catch (backendError) {
+                console.warn('Backend move command failed, trying fallback:', backendError);
+                // Fallback: move via Tauri window APIs if available
+                try {
+                    const { getCurrent } = window.__TAURI__.window;
+                    const currentWindow = getCurrent();
+                    const currentPos = await currentWindow.outerPosition();
+                    await currentWindow.setPosition({
+                        x: currentPos.x + deltaX,
+                        y: currentPos.y + deltaY
+                    });
+                } catch (fallbackError) {
+                    console.error('Fallback move also failed:', fallbackError);
+                    throw new Error(`Window move not supported: ${backendError.message}`);
+                }
+            }
+        } catch (error) {
+            console.error(`Failed to move window ${direction}:`, error);
+            this.showNotification(`Window move failed: ${error.message}`, 'error');
+        }
+    }
+    
+    // Window and content resizing
+    async resizeWindow(action) {
+        try {
+            const step = this.windowResizeStep;
+            
+            if (action === 'increase') {
+                this.currentWindowSize = Math.min(2.0, this.currentWindowSize + step); // Max 200%
+            } else if (action === 'decrease') {
+                this.currentWindowSize = Math.max(0.5, this.currentWindowSize - step); // Min 50%
+            }
+            
+            console.log(`🔧 Resizing to scale factor: ${this.currentWindowSize}`);
+            
+            // Method 1: Try backend command for window resizing
+            try {
+                await safeInvoke('resize_window_scale', { scaleFactor: this.currentWindowSize });
+            } catch (backendError) {
+                console.warn('Backend resize command failed, using HTML body scaling:', backendError);
+                
+                // Method 2: Scale the HTML body content directly
+                const body = document.body;
+                const mainWindow = document.querySelector('.main-window');
+                
+                if (body) {
+                    body.style.transform = `scale(${this.currentWindowSize})`;
+                    body.style.transformOrigin = 'top left';
+                    console.log(`✅ Applied HTML body scale: ${this.currentWindowSize}`);
+                    
+                    // Also scale the AI response window if it exists
+                    if (this.aiResponseWindow) {
+                        this.aiResponseWindow.style.transform = `scale(${this.currentWindowSize})`;
+                        this.aiResponseWindow.style.transformOrigin = 'top left';
+                        console.log(`✅ Applied AI window scale: ${this.currentWindowSize}`);
+                    }
+                    
+                    // Adjust window size to accommodate scaling if possible
+                    try {
+                        const { getCurrent } = window.__TAURI__.window;
+                        const currentWindow = getCurrent();
+                        const currentSize = await currentWindow.outerSize();
+                        
+                        // Keep the window size constant, let CSS scaling handle the content
+                        // This provides better visual experience
+                        console.log(`📐 Current window size: ${currentSize.width}x${currentSize.height}, scale: ${this.currentWindowSize}`);
+                        
+                    } catch (windowError) {
+                        console.warn('Could not access window APIs:', windowError);
+                    }
+                }
+                
+                if (mainWindow) {
+                    mainWindow.style.transform = `scale(${this.currentWindowSize})`;
+                    mainWindow.style.transformOrigin = 'top left';
+                    console.log(`✅ Applied main window scale: ${this.currentWindowSize}`);
+                }
+            }
+            
+            // Show feedback with percentage
+            const percentage = Math.round(this.currentWindowSize * 100);
+            this.showNotification(`Window scaled to ${percentage}%`, 'success');
+            
+        } catch (error) {
+            console.error(`Failed to resize window ${action}:`, error);
+            this.showNotification(`Window resize failed: ${error.message}`, 'error');
+        }
+    }
+    
+    // Register global system-wide hotkeys
+    async registerGlobalHotkeys() {
+        try {
+            // Register the most important global hotkeys that should work even when app is not focused
+            const globalHotkeys = [
+                { key: 'Shift+X', action: 'toggle_window_visibility' }, // Hide/Show window
+                { key: 'Shift+Z', action: 'generate_answer' },          // AI Answer trigger
+                { key: 'Shift+A', action: 'analyze_screen' },           // Screen analysis
+            ];
+            
+            for (const hotkey of globalHotkeys) {
+                await safeInvoke('register_global_hotkey', { 
+                    hotkey: hotkey.key, 
+                    action: hotkey.action 
+                });
+                console.log(`🌐 Registered global hotkey: ${hotkey.key} → ${hotkey.action}`);
+            }
+        } catch (error) {
+            console.error('Failed to register global hotkeys:', error);
+            throw error;
+        }
+    }
+    
+    // Show hotkey help
+    showHotkeyHelp() {
+        const helpText = `
+🔥 MockMate Hotkeys Available:
+
+🎤 Audio Controls:
+• Shift+S: Toggle System Sound
+• Shift+Q: Toggle Microphone
+
+🤖 AI Functions:
+• Shift+Z: Generate AI Answer
+• Shift+A: Analyze Screen
+• Shift+I: Focus Question Input
+• Enter: Submit Question
+
+🪟 Window Controls:
+• Shift+X: Hide/Show Window
+• Shift+C: Clear Listening Area
+
+📍 Window Positioning:
+• Shift+Home: Move Left
+• Shift+End: Move Right
+• Shift+PageUp: Move Up
+• Shift+PageDown: Move Down
+
+📏 Window Resizing:
+• Shift+Minus: Decrease Size
+• Shift+Plus: Increase Size
+        `;
+        
+        console.log(helpText);
+        
+        // Show brief notification about hotkeys
+        setTimeout(() => {
+            this.showNotification('Hotkeys enabled! Check console for full list', 'info');
+        }, 2000);
     }
 
     async setupTauriEventListeners() {
@@ -990,6 +1361,29 @@ class MockMateController {
                 this.clearTranscription();
             }
 
+            // ✅ STORE THE QUESTION FIRST for Generate button (similar to Send button)
+            try {
+                console.log('📝 Storing generated question:', question);
+                await window.qaStorageManager.storeQuestion({
+                    questionText: question,
+                    questionNumber: 1,
+                    category: 'generated',
+                    difficultyLevel: 'medium',
+                    source: 'generate_button',
+                    metadata: {
+                        timestamp: new Date().toISOString(),
+                        expectedDuration: 5,
+                        source: 'transcription_or_input',
+                        provider: this.selectedProvider,
+                        model: this.selectedModel
+                    }
+                });
+                console.log('✅ Generated question stored successfully');
+            } catch (storageError) {
+                console.error('❌ Failed to store generated question:', storageError);
+                // Continue with AI generation even if storage fails
+            }
+
             this.ensureValidModelSelection();
             this.showNotification('Generating AI answer...', 'info');
             
@@ -1052,12 +1446,120 @@ class MockMateController {
 
     async analyzeScreen() {
         try {
-            this.showNotification('Screen analysis feature coming soon...', 'info');
-            // Placeholder for future screen analysis functionality
-            // This would require screen capture capabilities
+            console.log('🔍 Starting screen analysis...');
+            
+            // Validate selection before starting analysis
+            this.ensureValidModelSelection();
+            
+            // Dynamic notification based on user's selected provider and model
+            const providerDisplayName = this.getProviderDisplayName(this.selectedProvider);
+            const modelDisplayName = this.models.find(m => (m.id || m.value) === this.selectedModel)?.name || this.selectedModel;
+            
+            this.showNotification(`Analyzing screen with ${providerDisplayName} ${modelDisplayName}...`, 'info');
+            
+            // Show AI response window in initial state
+            this.createAiResponseWindowInInitialState();
+            await this.showResponseWindow();
+
+            // ✅ STORE THE QUESTION FIRST for screen analysis
+            try {
+                console.log('📝 Storing screen analysis question...');
+                await window.qaStorageManager.storeQuestion({
+                    questionText: '[SCREEN_ANALYSIS] Generated question from screen content',
+                    questionNumber: 1,
+                    category: 'screen-analysis',
+                    difficultyLevel: 'medium',
+                    source: 'screen-analysis',
+                    metadata: {
+                        timestamp: new Date().toISOString(),
+                        expectedDuration: 5,
+                        analysisType: 'visual',
+                        provider: this.selectedProvider,
+                        model: this.selectedModel
+                    }
+                });
+                console.log('✅ Screen analysis question stored successfully');
+            } catch (storageError) {
+                console.error('❌ Failed to store screen analysis question:', storageError);
+                // Continue with analysis even if storage fails
+            }
+            
+            // Use the same dynamic flow as Send button - respect user's model and provider selection
+            const systemPrompt = 'You are an expert technical interviewer analyzing screen content. Generate a specific, relevant technical interview question based on the visible content from applications. Focus on any visible code, applications, documentation, or technical content that could form the basis of a good interview question.';
+            
+            const payload = {
+                model: this.selectedModel,        // Use user's selected model
+                provider: this.selectedProvider,  // Use user's selected provider
+                company: null,
+                position: null, 
+                job_description: null,
+                system_prompt: systemPrompt
+            };
+            
+            console.log('📸 Screen Analysis Payload (Dynamic):', JSON.stringify(payload, null, 2));
+            
+            // Use the same streaming pattern as Send button for consistency
+            if (this.selectedProvider === 'pollinations') {
+                // Use backend streaming for better UX (recommended for Pollinations)
+                try {
+                    console.log('🚀 Starting Pollinations streaming for screen analysis...');
+                    // Reset streaming state for new request
+                    this.streamingText = '';
+                    this.isStreaming = true;
+                    
+                    const result = await safeInvoke('analyze_screen_with_ai_streaming', { payload: payload });
+                    console.log('✅ Pollinations screen analysis streaming completed:', result);
+                    
+                    // Format the result for display
+                    const responseText = `**🎯 Generated Interview Question:**\n\n${result.generated_question}\n\n**📋 Analysis:**\n\n${result.analysis}\n\n**🎲 Confidence:** ${(result.confidence * 100).toFixed(0)}%\n\n---\n*Generated using ${providerDisplayName} ${modelDisplayName} with Windows Accessibility API*`;
+                    
+                    await this.sendToAiWindow('complete', responseText);
+                } catch (streamError) {
+                    console.warn('⚠️ Screen analysis streaming failed, falling back to non-streaming:', streamError);
+                    const result = await safeInvoke('analyze_screen_with_ai', { payload: payload });
+                    
+                    // Handle both structured result and simple string response
+                    let responseText;
+                    if (typeof result === 'object' && result.generated_question) {
+                        responseText = `**🎯 Generated Interview Question:**\n\n${result.generated_question}\n\n**📋 Analysis:**\n\n${result.analysis}\n\n**🎲 Confidence:** ${(result.confidence * 100).toFixed(0)}%\n\n---\n*Generated using ${providerDisplayName} ${modelDisplayName}*`;
+                    } else {
+                        responseText = result;
+                    }
+                    
+                    await this.sendToAiWindow('complete', responseText);
+                }
+            } else {
+                // For OpenAI and other providers
+                const result = await safeInvoke('analyze_screen_with_ai', { payload: payload });
+                
+                // Handle both structured result and simple string response
+                let responseText;
+                if (typeof result === 'object' && result.generated_question) {
+                    responseText = `**🎯 Generated Interview Question:**\n\n${result.generated_question}\n\n**📋 Analysis:**\n\n${result.analysis}\n\n**🎲 Confidence:** ${(result.confidence * 100).toFixed(0)}%\n\n---\n*Generated using ${providerDisplayName} ${modelDisplayName}*`;
+                } else {
+                    responseText = result;
+                }
+                
+                await this.sendToAiWindow('complete', responseText);
+            }
+            
+            this.showNotification('Screen analysis completed! Question generated successfully.', 'success');
+            
         } catch (error) {
-            console.error('Failed to analyze screen:', error);
-            this.showNotification(`Failed to analyze screen: ${error}`, 'error');
+            console.error('❌ Failed to analyze screen:', error);
+            
+            // Send error to AI window if it exists
+            await this.sendToAiWindow('error', error.message || error.toString());
+            
+            if (error.message && error.message.includes('Tauri not ready')) {
+                this.showNotification('Please wait for app to finish initializing...', 'warning');
+            } else if (error.message && error.message.includes('screenshot')) {
+                this.showNotification('Failed to capture screenshot. Make sure the screen is accessible.', 'error');
+            } else if (error.message && error.message.includes('API')) {
+                this.showNotification('AI vision analysis failed. Check Pollinations/OpenAI configuration.', 'error');
+            } else {
+                this.showNotification(`Screen analysis failed: ${error.message || error}`, 'error');
+            }
         }
     }
 
