@@ -5,17 +5,26 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use chrono::{DateTime, Utc, NaiveDateTime, TimeZone};
 use std::env;
+use crate::get_env_var;
 
 // Database connection pool - shared globally
 pub static DATABASE_POOL: Lazy<Pool> = Lazy::new(|| {
     let mut cfg = Config::new();
     
-    // Read from environment variables or use defaults (same as web backend)
-    cfg.host = Some(env::var("DB_HOST").unwrap_or_else(|_| "localhost".to_string()));
-    cfg.port = Some(env::var("DB_PORT").unwrap_or_else(|_| "5432".to_string()).parse().unwrap_or(5432));
-    cfg.dbname = Some(env::var("DB_NAME").unwrap_or_else(|_| "mockmate_db".to_string()));
-    cfg.user = Some(env::var("DB_USER").unwrap_or_else(|_| "mockmate_user".to_string()));
-    cfg.password = Some(env::var("DB_PASSWORD").unwrap_or_else(|_| "".to_string()));
+    // Read from embedded environment variables (with runtime fallbacks)
+    cfg.host = Some(get_env_var("DB_HOST").unwrap_or_else(|| "localhost".to_string()));
+    cfg.port = Some(get_env_var("DB_PORT").unwrap_or_else(|| "5432".to_string()).parse().unwrap_or(5432));
+    cfg.dbname = Some(get_env_var("DB_NAME").unwrap_or_else(|| "mockmate_db".to_string()));
+    cfg.user = Some(get_env_var("DB_USER").unwrap_or_else(|| "mockmate_user".to_string()));
+    cfg.password = Some(get_env_var("DB_PASSWORD").unwrap_or_else(|| "".to_string()));
+
+    // Log the database configuration for debugging
+    log::info!("📊 Database Configuration:");
+    log::info!("  Host: {}", cfg.host.as_ref().unwrap_or(&"<none>".to_string()));
+    log::info!("  Port: {}", cfg.port.unwrap_or(0));
+    log::info!("  Database: {}", cfg.dbname.as_ref().unwrap_or(&"<none>".to_string()));
+    log::info!("  User: {}", cfg.user.as_ref().unwrap_or(&"<none>".to_string()));
+    log::info!("  Password: {}", if cfg.password.as_ref().map(|p| !p.is_empty()).unwrap_or(false) { "***set***" } else { "<empty>" });
 
     cfg.create_pool(Some(Runtime::Tokio1), NoTls).expect("Failed to create database pool")
 });

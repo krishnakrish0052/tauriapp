@@ -204,13 +204,13 @@ pub fn run() -> Result<()> {
             audio::list_all_devices();
             
             // Initialize environment variables if needed
-            match std::env::var("DEEPGRAM_API_KEY") {
-                Ok(_) => info!("✅ DEEPGRAM_API_KEY loaded successfully"),
-                Err(_) => warn!("❌ DEEPGRAM_API_KEY not set in environment - transcription will not work")
+            match get_env_var("DEEPGRAM_API_KEY") {
+                Some(_) => info!("✅ DEEPGRAM_API_KEY loaded successfully"),
+                None => warn!("❌ DEEPGRAM_API_KEY not set in environment - transcription will not work")
             }
-            match std::env::var("OPENAI_API_KEY") {
-                Ok(_) => info!("✅ OPENAI_API_KEY loaded successfully"),
-                Err(_) => warn!("❌ OPENAI_API_KEY not set in environment - AI answers will not work")
+            match get_env_var("OPENAI_API_KEY") {
+                Some(_) => info!("✅ OPENAI_API_KEY loaded successfully"),
+                None => warn!("❌ OPENAI_API_KEY not set in environment - AI answers will not work")
             }
             
             Ok(())
@@ -305,8 +305,8 @@ impl AppState {
     fn ensure_openai_client(&self) -> Result<(), String> {
         let mut client_guard = self.openai_client.lock();
         if client_guard.is_none() {
-            let api_key = std::env::var("OPENAI_API_KEY")
-                .map_err(|_| "OPENAI_API_KEY environment variable not set".to_string())?;
+            let api_key = get_env_var("OPENAI_API_KEY")
+                .ok_or_else(|| "OPENAI_API_KEY environment variable not set".to_string())?;
             *client_guard = Some(OpenAIClient::new(api_key));
         }
         Ok(())
@@ -315,10 +315,10 @@ impl AppState {
     fn ensure_pollinations_client(&self) -> Result<(), String> {
         let mut client_guard = self.pollinations_client.lock();
         if client_guard.is_none() {
-            let api_key = std::env::var("POLLINATIONS_API_KEY")
-                .map_err(|_| "POLLINATIONS_API_KEY environment variable not set".to_string())?;
-            let referer = std::env::var("POLLINATIONS_REFERER")
-                .unwrap_or_else(|_| "mockmate".to_string());
+            let api_key = get_env_var("POLLINATIONS_API_KEY")
+                .ok_or_else(|| "POLLINATIONS_API_KEY environment variable not set".to_string())?;
+            let referer = get_env_var("POLLINATIONS_REFERER")
+                .unwrap_or_else(|| "mockmate".to_string());
             *client_guard = Some(PollinationsClient::new(api_key, referer));
         }
         Ok(())
@@ -2674,17 +2674,53 @@ fn extract_confidence_from_text(text: &str) -> f32 {
     0.75
 }
 
+// Helper function to get environment variables with compile-time fallbacks
+fn get_env_var(key: &str) -> Option<String> {
+    // First try build-time embedded variable (set by build.rs via cargo:rustc-env)
+    // These variables are embedded in the binary during compilation
+    let embedded_value = match key {
+        "DEEPGRAM_API_KEY" => env!("DEEPGRAM_API_KEY"),
+        "OPENAI_API_KEY" => env!("OPENAI_API_KEY"),
+        "POLLINATIONS_API_KEY" => env!("POLLINATIONS_API_KEY"),
+        "POLLINATIONS_REFERER" => env!("POLLINATIONS_REFERER"),
+        "DEEPGRAM_MODEL" => env!("DEEPGRAM_MODEL"),
+        "DEEPGRAM_LANGUAGE" => env!("DEEPGRAM_LANGUAGE"),
+        "DEEPGRAM_ENDPOINTING" => env!("DEEPGRAM_ENDPOINTING"),
+        "DEEPGRAM_INTERIM_RESULTS" => env!("DEEPGRAM_INTERIM_RESULTS"),
+        "DEEPGRAM_SMART_FORMAT" => env!("DEEPGRAM_SMART_FORMAT"),
+        "DEEPGRAM_KEEP_ALIVE" => env!("DEEPGRAM_KEEP_ALIVE"),
+        "DEEPGRAM_PUNCTUATE" => env!("DEEPGRAM_PUNCTUATE"),
+        "DEEPGRAM_PROFANITY_FILTER" => env!("DEEPGRAM_PROFANITY_FILTER"),
+        "DEEPGRAM_DIARIZE" => env!("DEEPGRAM_DIARIZE"),
+        "DEEPGRAM_MULTICHANNEL" => env!("DEEPGRAM_MULTICHANNEL"),
+        "DEEPGRAM_NUMERALS" => env!("DEEPGRAM_NUMERALS"),
+        "DB_HOST" => env!("DB_HOST"),
+        "DB_PORT" => env!("DB_PORT"),
+        "DB_NAME" => env!("DB_NAME"),
+        "DB_USER" => env!("DB_USER"),
+        "DB_PASSWORD" => env!("DB_PASSWORD"),
+        _ => return None,
+    };
+    
+    // Convert embedded value to String, return None if empty
+    if embedded_value.is_empty() {
+        // Try runtime environment variable as fallback (for development)
+        if let Ok(value) = std::env::var(key) {
+            return Some(value);
+        }
+        None
+    } else {
+        Some(embedded_value.to_string())
+    }
+}
+
 // Helper function to log environment variable status
 fn log_environment_status() {
-    info!("🔧 Environment Configuration Status:");
+    info!("🔧 Environment Configuration Status (using embedded + runtime fallback):");
     
-    // Check build-time embedded variables vs runtime variables
-    let deepgram_key = std::env::var("DEEPGRAM_API_KEY");
-    let openai_key = std::env::var("OPENAI_API_KEY");
-    let pollinations_key = std::env::var("POLLINATIONS_API_KEY");
-    
-    match deepgram_key {
-        Ok(key) => {
+    // Check build-time embedded variables vs runtime variables using our helper
+    match get_env_var("DEEPGRAM_API_KEY") {
+        Some(key) => {
             let key_preview = if key.len() > 8 { 
                 format!("{}...{}", &key[..4], &key[key.len()-4..])
             } else { 
@@ -2692,11 +2728,11 @@ fn log_environment_status() {
             };
             info!("✅ DEEPGRAM_API_KEY: {} (length: {})", key_preview, key.len());
         }
-        Err(_) => warn!("❌ DEEPGRAM_API_KEY: Not set")
+        None => warn!("❌ DEEPGRAM_API_KEY: Not available (neither runtime nor embedded)")
     }
     
-    match openai_key {
-        Ok(key) => {
+    match get_env_var("OPENAI_API_KEY") {
+        Some(key) => {
             let key_preview = if key.len() > 8 { 
                 format!("{}...{}", &key[..4], &key[key.len()-4..])
             } else { 
@@ -2704,11 +2740,11 @@ fn log_environment_status() {
             };
             info!("✅ OPENAI_API_KEY: {} (length: {})", key_preview, key.len());
         }
-        Err(_) => warn!("❌ OPENAI_API_KEY: Not set")
+        None => warn!("❌ OPENAI_API_KEY: Not available (neither runtime nor embedded)")
     }
     
-    match pollinations_key {
-        Ok(key) => {
+    match get_env_var("POLLINATIONS_API_KEY") {
+        Some(key) => {
             let key_preview = if key.len() > 8 { 
                 format!("{}...{}", &key[..4], &key[key.len()-4..])
             } else { 
@@ -2716,23 +2752,22 @@ fn log_environment_status() {
             };
             info!("✅ POLLINATIONS_API_KEY: {} (length: {})", key_preview, key.len());
         }
-        Err(_) => warn!("❌ POLLINATIONS_API_KEY: Not set")
+        None => warn!("❌ POLLINATIONS_API_KEY: Not available (neither runtime nor embedded)")
     }
     
     // Database configuration
-    match std::env::var("DB_HOST") {
-        Ok(host) => info!("✅ DB_HOST: {}", host),
-        Err(_) => warn!("❌ DB_HOST: Not set")
+    match get_env_var("DB_HOST") {
+        Some(host) => info!("✅ DB_HOST: {}", host),
+        None => warn!("❌ DB_HOST: Not available (neither runtime nor embedded)")
     }
     
     // Deepgram configuration
-    if let Ok(model) = std::env::var("DEEPGRAM_MODEL") {
-        info!("✅ DEEPGRAM_MODEL: {}", model);
-    } else {
-        warn!("❌ DEEPGRAM_MODEL: Not set (will use default)");
+    match get_env_var("DEEPGRAM_MODEL") {
+        Some(model) => info!("✅ DEEPGRAM_MODEL: {}", model),
+        None => warn!("❌ DEEPGRAM_MODEL: Not available (will use default)")
     }
     
-    info!("🔧 Environment configuration check complete");
+    info!("🔧 Environment configuration check complete (build-time embedded + runtime fallback)");
 }
 
 
