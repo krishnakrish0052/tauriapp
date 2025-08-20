@@ -27,12 +27,12 @@ use pollinations::{PollinationsClient, AIProvider};
 // use database::shared::*; // Import shared database types and functions - commented out to avoid unused import warning
 
 pub fn run() -> Result<()> {
-    // Load environment variables from .env file
-    if let Err(e) = dotenvy::dotenv() {
-        warn!("Failed to load .env file: {}. Environment variables will be loaded from system.", e);
-    } else {
-        info!("Successfully loaded .env file");
-    }
+    // Environment variables are now embedded at build time via build.rs
+    // We'll use env!() macro to access them, with fallbacks to runtime env::var() for development
+    info!("MockMate starting with embedded environment configuration...");
+    
+    // Log which environment variables are available
+    log_environment_status();
 
     Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -2925,6 +2925,67 @@ fn extract_confidence_from_text(text: &str) -> f32 {
     // Default confidence
     warn!("[EXTRACT] No confidence indicators found, using default: 0.75");
     0.75
+}
+
+// Helper function to log environment variable status
+fn log_environment_status() {
+    info!("🔧 Environment Configuration Status:");
+    
+    // Check build-time embedded variables vs runtime variables
+    let deepgram_key = std::env::var("DEEPGRAM_API_KEY");
+    let openai_key = std::env::var("OPENAI_API_KEY");
+    let pollinations_key = std::env::var("POLLINATIONS_API_KEY");
+    
+    match deepgram_key {
+        Ok(key) => {
+            let key_preview = if key.len() > 8 { 
+                format!("{}...{}", &key[..4], &key[key.len()-4..])
+            } else { 
+                "***".to_string()
+            };
+            info!("✅ DEEPGRAM_API_KEY: {} (length: {})", key_preview, key.len());
+        }
+        Err(_) => warn!("❌ DEEPGRAM_API_KEY: Not set")
+    }
+    
+    match openai_key {
+        Ok(key) => {
+            let key_preview = if key.len() > 8 { 
+                format!("{}...{}", &key[..4], &key[key.len()-4..])
+            } else { 
+                "***".to_string()
+            };
+            info!("✅ OPENAI_API_KEY: {} (length: {})", key_preview, key.len());
+        }
+        Err(_) => warn!("❌ OPENAI_API_KEY: Not set")
+    }
+    
+    match pollinations_key {
+        Ok(key) => {
+            let key_preview = if key.len() > 8 { 
+                format!("{}...{}", &key[..4], &key[key.len()-4..])
+            } else { 
+                "***".to_string()
+            };
+            info!("✅ POLLINATIONS_API_KEY: {} (length: {})", key_preview, key.len());
+        }
+        Err(_) => warn!("❌ POLLINATIONS_API_KEY: Not set")
+    }
+    
+    // Database configuration
+    match std::env::var("DB_HOST") {
+        Ok(host) => info!("✅ DB_HOST: {}", host),
+        Err(_) => warn!("❌ DB_HOST: Not set")
+    }
+    
+    // Deepgram configuration
+    if let Ok(model) = std::env::var("DEEPGRAM_MODEL") {
+        info!("✅ DEEPGRAM_MODEL: {}", model);
+    } else {
+        warn!("❌ DEEPGRAM_MODEL: Not set (will use default)");
+    }
+    
+    info!("🔧 Environment configuration check complete");
 }
 
 

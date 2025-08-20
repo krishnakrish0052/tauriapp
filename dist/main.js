@@ -464,9 +464,6 @@ class MockMateController {
         
         // Track current state for hotkey functionality
         this.isWindowHidden = false;
-        this.currentWindowSize = 1.0; // Scale factor
-        this.windowMoveStep = 50; // pixels to move per keystroke
-        this.windowResizeStep = 0.1; // scale factor change per keystroke
         
         // Global keydown handler
         document.addEventListener('keydown', async (e) => {
@@ -475,7 +472,7 @@ class MockMateController {
         
         // Prevent default on special key combinations to avoid conflicts
         document.addEventListener('keydown', (e) => {
-            if (e.shiftKey && ['KeyS', 'KeyZ', 'KeyX', 'KeyQ', 'KeyA', 'KeyI', 'KeyC', 'Home', 'End', 'PageUp', 'PageDown', 'Minus', 'Equal'].includes(e.code)) {
+            if (e.shiftKey && ['KeyS', 'KeyZ', 'KeyX', 'KeyQ', 'KeyA', 'KeyI', 'KeyC'].includes(e.code)) {
                 e.preventDefault();
             }
         });
@@ -565,54 +562,6 @@ class MockMateController {
                     }
                     break;
                     
-                // 9-13. Positioning and Resizing
-                // 10. Move Left: Shift+Home
-                case 'Home':
-                    if (e.shiftKey) {
-                        await this.moveWindow('left');
-                        this.showNotification('Window Moved Left', 'info');
-                    }
-                    break;
-                    
-                // 11. Move Right: Shift+End
-                case 'End':
-                    if (e.shiftKey) {
-                        await this.moveWindow('right');
-                        this.showNotification('Window Moved Right', 'info');
-                    }
-                    break;
-                    
-                // 12. Move Up: Shift+PageUp
-                case 'PageUp':
-                    if (e.shiftKey) {
-                        await this.moveWindow('up');
-                        this.showNotification('Window Moved Up', 'info');
-                    }
-                    break;
-                    
-                // 13. Move Down: Shift+PageDown
-                case 'PageDown':
-                    if (e.shiftKey) {
-                        await this.moveWindow('down');
-                        this.showNotification('Window Moved Down', 'info');
-                    }
-                    break;
-                    
-                // 14. Decrease Size: Shift+-
-                case 'Minus':
-                    if (e.shiftKey) {
-                        await this.resizeWindow('decrease');
-                        this.showNotification('Window Size Decreased', 'info');
-                    }
-                    break;
-                    
-                // 15. Increase Size: Shift++
-                case 'Equal': // + key without shift, but with shift it's +
-                    if (e.shiftKey) {
-                        await this.resizeWindow('increase');
-                        this.showNotification('Window Size Increased', 'info');
-                    }
-                    break;
                     
                 default:
                     // Unknown hotkey combination
@@ -649,119 +598,6 @@ class MockMateController {
         if (questionInput) {
             questionInput.focus();
             questionInput.select(); // Select all text for easy replacement
-        }
-    }
-    
-    // Window movement
-    async moveWindow(direction) {
-        try {
-            const step = this.windowMoveStep;
-            let deltaX = 0, deltaY = 0;
-            
-            switch (direction) {
-                case 'left':
-                    deltaX = -step;
-                    break;
-                case 'right':
-                    deltaX = step;
-                    break;
-                case 'up':
-                    deltaY = -step;
-                    break;
-                case 'down':
-                    deltaY = step;
-                    break;
-            }
-            
-            // Try the backend command first
-            try {
-                await safeInvoke('move_window_relative', { deltaX, deltaY });
-            } catch (backendError) {
-                console.warn('Backend move command failed, trying fallback:', backendError);
-                // Fallback: move via Tauri window APIs if available
-                try {
-                    const { getCurrent } = window.__TAURI__.window;
-                    const currentWindow = getCurrent();
-                    const currentPos = await currentWindow.outerPosition();
-                    await currentWindow.setPosition({
-                        x: currentPos.x + deltaX,
-                        y: currentPos.y + deltaY
-                    });
-                } catch (fallbackError) {
-                    console.error('Fallback move also failed:', fallbackError);
-                    throw new Error(`Window move not supported: ${backendError.message}`);
-                }
-            }
-        } catch (error) {
-            console.error(`Failed to move window ${direction}:`, error);
-            this.showNotification(`Window move failed: ${error.message}`, 'error');
-        }
-    }
-    
-    // Window and content resizing
-    async resizeWindow(action) {
-        try {
-            const step = this.windowResizeStep;
-            
-            if (action === 'increase') {
-                this.currentWindowSize = Math.min(2.0, this.currentWindowSize + step); // Max 200%
-            } else if (action === 'decrease') {
-                this.currentWindowSize = Math.max(0.5, this.currentWindowSize - step); // Min 50%
-            }
-            
-            console.log(`🔧 Resizing to scale factor: ${this.currentWindowSize}`);
-            
-            // Method 1: Try backend command for window resizing
-            try {
-                await safeInvoke('resize_window_scale', { scaleFactor: this.currentWindowSize });
-            } catch (backendError) {
-                console.warn('Backend resize command failed, using HTML body scaling:', backendError);
-                
-                // Method 2: Scale the HTML body content directly
-                const body = document.body;
-                const mainWindow = document.querySelector('.main-window');
-                
-                if (body) {
-                    body.style.transform = `scale(${this.currentWindowSize})`;
-                    body.style.transformOrigin = 'top left';
-                    console.log(`✅ Applied HTML body scale: ${this.currentWindowSize}`);
-                    
-                    // Also scale the AI response window if it exists
-                    if (this.aiResponseWindow) {
-                        this.aiResponseWindow.style.transform = `scale(${this.currentWindowSize})`;
-                        this.aiResponseWindow.style.transformOrigin = 'top left';
-                        console.log(`✅ Applied AI window scale: ${this.currentWindowSize}`);
-                    }
-                    
-                    // Adjust window size to accommodate scaling if possible
-                    try {
-                        const { getCurrent } = window.__TAURI__.window;
-                        const currentWindow = getCurrent();
-                        const currentSize = await currentWindow.outerSize();
-                        
-                        // Keep the window size constant, let CSS scaling handle the content
-                        // This provides better visual experience
-                        console.log(`📐 Current window size: ${currentSize.width}x${currentSize.height}, scale: ${this.currentWindowSize}`);
-                        
-                    } catch (windowError) {
-                        console.warn('Could not access window APIs:', windowError);
-                    }
-                }
-                
-                if (mainWindow) {
-                    mainWindow.style.transform = `scale(${this.currentWindowSize})`;
-                    mainWindow.style.transformOrigin = 'top left';
-                    console.log(`✅ Applied main window scale: ${this.currentWindowSize}`);
-                }
-            }
-            
-            // Show feedback with percentage
-            const percentage = Math.round(this.currentWindowSize * 100);
-            this.showNotification(`Window scaled to ${percentage}%`, 'success');
-            
-        } catch (error) {
-            console.error(`Failed to resize window ${action}:`, error);
-            this.showNotification(`Window resize failed: ${error.message}`, 'error');
         }
     }
     
@@ -806,16 +642,6 @@ class MockMateController {
 🪟 Window Controls:
 • Shift+X: Hide/Show Window
 • Shift+C: Clear Listening Area
-
-📍 Window Positioning:
-• Shift+Home: Move Left
-• Shift+End: Move Right
-• Shift+PageUp: Move Up
-• Shift+PageDown: Move Down
-
-📏 Window Resizing:
-• Shift+Minus: Decrease Size
-• Shift+Plus: Increase Size
         `;
         
         console.log(helpText);

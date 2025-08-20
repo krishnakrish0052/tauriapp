@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>MockMate AI: Control Panel</title>
+    <title>MockMate</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     <style>
@@ -122,16 +122,17 @@
         
         .logo {
             width: 32px; height: 32px;
-            background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
             border-radius: 8px;
             display: flex; align-items: center; justify-content: center;
             font-size: 18px; color: white;
             box-shadow: var(--shadow-sm);
+            /* Remove background as we're using an SVG image */
         }
         
         .brand h2 {
             font-size: 18px; margin: 0; font-weight: 600; letter-spacing: -0.2px;
-            background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+            /* Use colors that complement the orange/yellow MockMate logo */
+            background: linear-gradient(135deg, #FFB800, #FF8C00);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
@@ -695,8 +696,10 @@
                         <span class="material-icons timer-icon">access_time</span>
                         <span id="timerDisplay">00:00</span>
                     </div>
-                    <div class="logo"><span class="material-icons" style="font-size: 20px;">psychology</span></div>
-                    <h2>MockMate AI</h2>
+                    <div class="logo">
+                        <img src="mockmate-logo.svg" alt="MockMate" style="width: 32px; height: 32px; border-radius: 8px;">
+                    </div>
+                    <h2>MockMate</h2>
                     <div class="status-pill">Live</div>
                 </div>
                 <div class="controls-bar">
