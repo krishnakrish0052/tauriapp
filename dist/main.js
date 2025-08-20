@@ -1333,7 +1333,7 @@ class MockMateController {
                     this.streamingText = '';
                     this.isStreaming = true;
                     
-                    const result = await safeInvoke('analyze_screen_with_ai_streaming', { payload: payload });
+                    const result = await safeInvoke('analyze_applications_with_ai_streaming', { payload: payload });
                     console.log('✅ Pollinations screen analysis streaming completed:', result);
                     
                     // Format the result for display

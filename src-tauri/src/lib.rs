@@ -9,7 +9,6 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 pub mod audio;
-mod screenshot;
 mod websocket;
 mod openai;
 mod pollinations;
@@ -72,14 +71,17 @@ pub fn run() -> Result<()> {
             pollinations_generate_answer,
             pollinations_generate_answer_streaming,
             pollinations_generate_answer_post_streaming,
-            // Screenshot and AI Analysis commands
-            debug_screenshot_info,
-            capture_screenshot_cmd,
+            // AI Analysis commands (accessibility-based)
             analyze_screen_with_ai,
             analyze_screen_with_ai_streaming,
             // Windows Accessibility API commands (Primary text reading solution)
             accessibility_reader::read_text_from_applications,
             accessibility_reader::read_text_from_focused_window,
+            accessibility_reader::read_text_from_background_windows,
+            accessibility_reader::read_text_from_current_window,
+            // NEW: Commands for targeting window behind MockMate (interviewer's window)
+            accessibility_reader::read_text_from_window_behind_mockmate,
+            accessibility_reader::capture_previous_focused_window,
             // Real-time monitoring commands
             accessibility_reader::start_realtime_monitoring,
             accessibility_reader::stop_realtime_monitoring,
@@ -2000,41 +2002,7 @@ struct ScreenshotResponse {
     height: u32,
 }
 
-#[tauri::command]
-fn debug_screenshot_info() -> Result<String, String> {
-    info!("🔍 Debug screenshot info...");
-    
-    match screenshot::capture_screenshot() {
-        Ok(base64_image) => {
-            Ok(format!("Screenshot captured successfully, base64 length: {}", base64_image.len()))
-        }
-        Err(e) => {
-            error!("❌ Debug screenshot failed: {}", e);
-            Err(format!("Debug screenshot failed: {}", e))
-        }
-    }
-}
-
-#[tauri::command]
-fn capture_screenshot_cmd() -> Result<ScreenshotResponse, String> {
-    info!("📸 Capturing screenshot for AI analysis...");
-    
-    match screenshot::capture_screenshot() {
-        Ok(base64_image) => {
-            // For now, we'll estimate dimensions from the base64 size
-            // In a real implementation, we could get actual dimensions from the screenshot module
-            Ok(ScreenshotResponse {
-                screenshot: base64_image,
-                width: 1920, // Default assumption
-                height: 1080, // Default assumption
-            })
-        }
-        Err(e) => {
-            error!("❌ Failed to capture screenshot: {}", e);
-            Err(format!("Failed to capture screenshot: {}", e))
-        }
-    }
-}
+// Screenshot commands removed - using accessibility-based analysis instead
 
 #[derive(Serialize, Deserialize)]
 struct AnalyzeScreenWithAiPayload {
@@ -2059,9 +2027,9 @@ async fn analyze_screen_with_ai(
     state: State<'_, AppState>,
     app_handle: AppHandle,
 ) -> Result<String, String> {
-    info!("[SCREEN_ANALYSIS] This command has been disabled. Please use the Windows Accessibility API analysis instead.");
+    info!("[SCREEN_ANALYSIS] Using accessibility-based analysis as fallback for non-streaming analysis.");
     
-    // Redirect to the accessibility-based analysis
+    // Use the accessibility-based analysis for non-streaming version
     match analyze_applications_with_ai_streaming(payload, state, app_handle).await {
         Ok(result) => Ok(format!("Generated question: {}", result.generated_question)),
         Err(e) => Err(e),
@@ -2082,240 +2050,19 @@ async fn analyze_screen_with_ai_streaming(
         warn!("Failed to show AI response window: {}", e);
     }
     
-    // First, capture the screenshot
-    let screenshot_data = match screenshot::capture_screenshot() {
-        Ok(data) => data,
-        Err(e) => {
-            error!("[ERROR] Failed to capture screenshot: {}", e);
-            
-            // Send error to UI
-            let error_data = AiResponseData {
-                message_type: "error".to_string(),
-                text: None,
-                error: Some(format!("Failed to capture screenshot: {}", e)),
-            };
-            let _ = send_ai_response_data(app_handle, error_data).await;
-            
-            return Err(format!("Failed to capture screenshot: {}", e));
-        }
-    };
-    
-    info!("[SUCCESS] Screenshot captured, size: {} bytes", screenshot_data.len());
+    // Use accessibility-based analysis instead of screenshot capture
+    info!("[SCREEN_ANALYSIS_STREAMING] Delegating to accessibility-based analysis...");
     
     // Send initial status to UI
     let status_data = AiResponseData {
         message_type: "stream-token".to_string(),
-        text: Some("[ANALYSIS] Screenshot captured successfully, analyzing content...".to_string()),
+        text: Some("[ANALYSIS] Starting accessibility-based screen analysis...".to_string()),
         error: None,
     };
     let _ = send_ai_response_data(app_handle.clone(), status_data).await;
     
-    // Determine which AI provider to use
-    let provider = AIProvider::from_str(&payload.provider)
-        .unwrap_or(AIProvider::OpenAI);
-    
-    let mut context = {
-        let context_guard = state.interview_context.lock();
-        context_guard.clone()
-    };
-    
-    // Update context with payload data
-    if let Some(company) = payload.company {
-        context.company = Some(company);
-    }
-    if let Some(position) = payload.position {
-        context.position = Some(position);
-    }
-    if let Some(job_description) = payload.job_description {
-        context.job_description = Some(job_description);
-    }
-    
-    // Build AI prompt for screen analysis and question generation
-    let system_prompt = payload.system_prompt.unwrap_or_else(|| {
-        "You are an expert technical interviewer analyzing a screenshot of a user's screen. Look at the visible content carefully - this might include:
-        - Code in editors (analyze programming concepts, syntax, patterns)
-        - Documentation or technical articles (focus on concepts being studied)
-        - Applications or interfaces (understand the technical context)
-        - Text content (generate questions about the subject matter)
-        - Development environments (ask about tools, workflows, best practices)
-        
-        Generate a thoughtful interview question that tests understanding of what's actually visible on screen. Make the question specific to the content shown, not generic.".to_string()
-    });
-    
-    let analysis_prompt = format!(
-        "{}\n\nAnalyze this screenshot and generate a specific interview question based on what you see. Your response MUST be valid JSON in exactly this format (no additional text):\n\n{{\n  \"generated_question\": \"Your specific interview question about the visible content\",\n  \"analysis\": \"Brief explanation of why this question tests understanding of what's shown in the screenshot\",\n  \"confidence\": 0.85\n}}\n\nOnly return the JSON object, nothing else.",
-        system_prompt
-    );
-    
-    // Initialize streaming state and timing
-    let stream_start_time = std::time::Instant::now();
-    info!("[STREAMING] Starting AI analysis with streaming for screen content...");
-    let _ = app_handle.emit("ai-stream-start", ());
-    
-    // Stream the analysis with callback to update UI progressively
-    let app_handle_clone = app_handle.clone();
-    let result = match provider {
-        AIProvider::OpenAI => {
-            info!("[AI_PROVIDER] Using OpenAI for streaming screenshot analysis");
-            state.ensure_openai_client()?;
-            
-            let client = {
-                let client_guard = state.openai_client.lock();
-                client_guard.as_ref().unwrap().clone()
-            };
-            
-            let model = openai::OpenAIModel::from_string(&payload.model)
-                .map_err(|e| format!("Invalid OpenAI model: {}", e))?;
-            
-            // For OpenAI, we'll simulate streaming by sending status updates
-            let status_update = AiResponseData {
-                message_type: "stream-token".to_string(),
-                text: Some("\n[ANALYSIS] Sending screenshot to OpenAI for analysis...".to_string()),
-                error: None,
-            };
-            let _ = send_ai_response_data(app_handle_clone.clone(), status_update).await;
-            
-            // Use vision analysis
-            client.analyze_screenshot_with_vision(&screenshot_data, &analysis_prompt, &context, model)
-                .await
-                .map_err(|e| e.to_string())
-        }
-        AIProvider::Pollinations => {
-            info!("[AI_PROVIDER] Using Pollinations for streaming screenshot analysis with model: {}", payload.model);
-            state.ensure_pollinations_client()?;
-            
-            let client = {
-                let client_guard = state.pollinations_client.lock();
-                client_guard.as_ref().unwrap().clone()
-            };
-            
-            let model = pollinations::PollinationsModel::from_string(&payload.model)
-                .map_err(|e| format!("Invalid Pollinations model: {}", e))?;
-            
-            // For Pollinations with streaming capability
-            let status_update = AiResponseData {
-                message_type: "stream-token".to_string(),
-                text: Some("\n[ANALYSIS] Connecting to Pollinations AI for streaming analysis...".to_string()),
-                error: None,
-            };
-            let _ = send_ai_response_data(app_handle_clone.clone(), status_update).await;
-            
-            // Use streaming vision analysis for Pollinations
-            match client.analyze_screenshot_with_vision_streaming(&screenshot_data, &analysis_prompt, &context, model.clone(), 
-                move |token: &str| {
-                    info!("[STREAM_TOKEN] Received vision analysis token: '{}'", token.chars().take(50).collect::<String>());
-                    
-                    // Send streaming token to UI
-                    let data = AiResponseData {
-                        message_type: "stream-token".to_string(),
-                        text: Some(token.to_string()),
-                        error: None,
-                    };
-                    let app_handle_for_token = app_handle_clone.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = send_ai_response_data(app_handle_for_token, data).await {
-                            error!("Failed to send streaming token to UI: {}", e);
-                        }
-                    });
-                }
-            ).await {
-                Ok(result) => Ok(result),
-                Err(_) => {
-                    // Fallback to non-streaming analysis if streaming fails
-                    info!("[FALLBACK] Streaming not available, using regular vision analysis");
-                    client.analyze_screenshot_with_vision(&screenshot_data, &analysis_prompt, &context, model)
-                        .await
-                        .map_err(|e| e.to_string())
-                }
-            }
-        }
-    }?;
-    
-    let elapsed_time = stream_start_time.elapsed();
-    info!("[SUCCESS] AI analysis completed. Response length: {}, elapsed time: {:.2?}", result.len(), elapsed_time);
-    
-    // Try to parse the AI response as JSON
-    let analysis_result = match serde_json::from_str::<AiAnalysisResult>(&result) {
-        Ok(parsed) => {
-            info!("[SUCCESS] Successfully parsed JSON response from AI");
-            info!("[DEBUG] Parsed question: '{}'", parsed.generated_question);
-            info!("[DEBUG] Parsed analysis: '{}'", parsed.analysis);
-            info!("[DEBUG] Parsed confidence: {}", parsed.confidence);
-            parsed
-        },
-        Err(parse_error) => {
-            error!("[ERROR] Failed to parse AI response as JSON: {}", parse_error);
-            error!("[DEBUG] Full raw AI response: '{}'", result);
-            
-            // Try to extract question from the text response
-            let extracted_question = extract_question_from_text(&result);
-            let extracted_analysis = extract_analysis_from_text(&result);
-            let extracted_confidence = extract_confidence_from_text(&result);
-            
-            info!("[DEBUG] Extracted question: '{}'", extracted_question);
-            info!("[DEBUG] Extracted analysis: '{}'", extracted_analysis);
-            info!("[DEBUG] Extracted confidence: {}", extracted_confidence);
-            
-            AiAnalysisResult {
-                generated_question: extracted_question,
-                analysis: extracted_analysis,
-                confidence: extracted_confidence,
-            }
-        }
-    };
-    
-    // Send final formatted result to UI
-    let formatted_response = format!(
-        "\n[QUESTION] Generated Interview Question:\n\n🎯 {}\n\n[ANALYSIS] Analysis:\n\n📋 {}\n\n[CONFIDENCE] Confidence: {:.0}%\n\nGenerated using {} {} via {}",
-        analysis_result.generated_question,
-        analysis_result.analysis,
-        analysis_result.confidence * 100.0,
-        payload.provider.to_uppercase(),
-        payload.model,
-        if payload.provider.to_lowercase() == "pollinations" { "Pollinations" } else { "OpenAI" }
-    );
-    
-    let completion_data = AiResponseData {
-        message_type: "complete".to_string(),
-        text: Some(formatted_response),
-        error: None,
-    };
-    let _ = send_ai_response_data(app_handle.clone(), completion_data).await;
-    
-    // Emit completion event
-    let _ = app_handle.emit("ai-stream-complete", &analysis_result);
-    
-    info!("[SUCCESS] AI analysis completed: {}", analysis_result.generated_question);
-    
-    // Store the generated question in the database (same as manual questions)
-    let question_text = &analysis_result.generated_question;
-    if !question_text.is_empty() {
-        // Try to store the question via QA Storage Manager if available
-        let storage_payload = serde_json::json!({
-            "questionText": question_text,
-            "questionNumber": 1,
-            "category": "ai_generated",
-            "difficultyLevel": "medium",
-            "source": "screen_analysis",
-            "metadata": {
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-                "aiProvider": payload.provider,
-                "aiModel": payload.model,
-                "confidence": analysis_result.confidence,
-                "analysisType": "screenshot",
-                "expectedDuration": 5
-            }
-        });
-        
-        // Emit event to frontend to store the question via QA Storage Manager
-        if let Err(e) = app_handle.emit("store-ai-question", storage_payload) {
-            error!("[ERROR] Failed to emit store-ai-question event: {}", e);
-        } else {
-            info!("[SUCCESS] AI-generated question storage event emitted");
-        }
-    }
-    
-    Ok(analysis_result)
+    // Delegate to accessibility-based analysis
+    analyze_applications_with_ai_streaming(payload, state, app_handle).await
 }
 
 // Accessibility-based AI Analysis Commands (Primary Solution)
