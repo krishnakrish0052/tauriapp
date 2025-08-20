@@ -566,13 +566,13 @@ impl WasapiLoopback {
         let stream = device.build_input_stream(
             config,
             move |data: &[T], _: &cpal::InputCallbackInfo| {
-                // Always log the first few callbacks to verify it's working
-                static mut CALLBACK_COUNT: u32 = 0;
-                unsafe {
-                    CALLBACK_COUNT += 1;
-                    if CALLBACK_COUNT <= 5 {
-                        info!("Audio callback #{}: received {} samples", CALLBACK_COUNT, data.len());
-                    }
+                // Use atomic counter instead of static mut for thread safety
+                use std::sync::atomic::{AtomicU32, Ordering};
+                static CALLBACK_COUNT: AtomicU32 = AtomicU32::new(0);
+                
+                let count = CALLBACK_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+                if count <= 5 {
+                    info!("Audio callback #{}: received {} samples", count, data.len());
                 }
                 
                 if !is_recording.load(Ordering::Relaxed) {
@@ -599,10 +599,8 @@ impl WasapiLoopback {
                     
                     // Log more frequently to show capture is working
                     if buffer.len() > 0 && (buffer.len() - initial_len) > 0 {
-                        unsafe {
-                            if CALLBACK_COUNT % 100 == 0 {
-                                info!("Audio capture active: {} total samples captured", buffer.len());
-                            }
+                        if count % 100 == 0 {
+                            info!("Audio capture active: {} total samples captured", buffer.len());
                         }
                     }
                 } else {

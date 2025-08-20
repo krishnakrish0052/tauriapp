@@ -567,46 +567,6 @@ impl WindowsAccessibilityReader {
         Ok(extracted_text)
     }
 
-    /// Extract text using UI Automation API
-    fn extract_text_ui_automation(&self, hwnd: HWND) -> Result<String> {
-        debug!("🤖 UI Automation text extraction starting...");
-        
-        // Try different UI Automation approaches
-        let mut extracted_texts = Vec::new();
-        
-        // Method 1: Extract from child windows (most common for chat applications)
-        if let Ok(child_texts) = self.extract_from_child_windows(hwnd) {
-            extracted_texts.extend(child_texts);
-        }
-        
-        // Method 2: Extract from edit controls
-        if let Ok(edit_texts) = self.extract_from_edit_controls(hwnd) {
-            extracted_texts.extend(edit_texts);
-        }
-        
-        // Method 3: Extract using accessibility patterns
-        if let Ok(accessible_text) = self.extract_using_accessibility_patterns(hwnd) {
-            if !accessible_text.trim().is_empty() {
-                extracted_texts.push(accessible_text);
-            }
-        }
-        
-        // Method 4: Extract from rich text controls (Teams, Zoom often use these)
-        if let Ok(rich_texts) = self.extract_from_rich_text_controls(hwnd) {
-            extracted_texts.extend(rich_texts);
-        }
-        
-        // Prioritize and filter extracted texts
-        let prioritized_content = self.prioritize_extracted_content(&extracted_texts);
-        
-        if !prioritized_content.trim().is_empty() {
-            debug!("✅ UI Automation extracted {} chars total", prioritized_content.len());
-            Ok(prioritized_content)
-        } else {
-            debug!("⚠️ UI Automation found no meaningful text");
-            Ok(String::new())
-        }
-    }
     
     /// Extract text from child windows
     fn extract_from_child_windows(&self, parent_hwnd: HWND) -> Result<Vec<String>> {
@@ -708,17 +668,6 @@ impl WindowsAccessibilityReader {
         Ok(texts)
     }
     
-    /// Extract using Windows accessibility patterns
-    fn extract_using_accessibility_patterns(&self, hwnd: HWND) -> Result<String> {
-        // This would use proper UI Automation COM interfaces
-        // For now, we'll use a simpler approach that works with most applications
-        
-        // Try to get accessible text using legacy accessibility APIs
-        let text = self.extract_using_legacy_accessibility(hwnd)?;
-        
-        debug!("Accessibility patterns extracted {} chars", text.len());
-        Ok(text)
-    }
     
     /// Extract using legacy accessibility APIs
     fn extract_using_legacy_accessibility(&self, hwnd: HWND) -> Result<String> {

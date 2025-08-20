@@ -137,18 +137,8 @@ class SessionFlowManager {
         
         console.log('🔄 Transitioned to connected state');
         
-        // Resize main window to accommodate the detailed session info and buttons
-        try {
-            // Use the proper safeInvoke from main.js that handles the Tauri API correctly
-            if (window.safeInvoke) {
-                await window.safeInvoke('resize_main_window', { width: 800, height: 280 });
-            } else {
-                console.log('⚠️ safeInvoke not available, skipping window resize');
-            }
-            console.log('📐 Main window resized to show full session details');
-        } catch (resizeError) {
-            console.warn('⚠️ Failed to resize main window:', resizeError);
-        }
+        // Keep window at same size with more compact session details panel
+        console.log('🖼️ Maintaining current window size with compact session details')
         
         // Show notification
         this.showNotification(`Connected to "${sessionInfo.interview_config.job_title}"`, 'success');
@@ -178,57 +168,68 @@ class SessionFlowManager {
             panel.innerHTML = `
                 <div class="session-connected-content">
                     <div class="session-connection-header">
-                        <div class="session-icon">
-                            <span class="material-icons">check_circle</span>
+                        <div class="session-header-content">
+                            <div class="session-brand">
+                                <div class="logo">
+                                    <img src="mockmate-logo.png" alt="MockMate" style="width: 40px; height: 40px; border-radius: 8px;">
+                                </div>
+                                <div>
+                                    <h2 style="margin: 0; font-size: 24px; font-weight: 600;">
+                                        <span style="color: #ffffff;">Mock</span><span style="color: #ffd700;">Mate</span>
+                                    </h2>
+                                    <p style="margin: 0; font-size: 16px; color: var(--text-muted);">Connected</p>
+                                </div>
+                            </div>
                         </div>
-                        <div class="session-title-info">
-                            <h3>Connected: ${sessionInfo.job_title}</h3>
-                            <p class="session-company">📍 ${companyDisplay}</p>
+                        <div class="header-action-buttons">
+                            <button id="activateSessionBtn" class="btn-header start" title="Start Session">
+                                Start
+                            </button>
+                            <button id="disconnectSessionBtn" class="btn-header disconnect" title="Disconnect">
+                                Disc.
+                            </button>
+                            <button id="sessionCloseBtn" class="btn-header close" title="Close Application">
+                                ✕
+                            </button>
                         </div>
                     </div>
                     
-                    <div class="session-details-compact">
-                        <div class="detail-row">
-                            <span class="detail-label">👤 Interviewer:</span>
-                            <span class="detail-value">${sessionInfo.user_details.name}</span>
+                    <div class="session-main-content">
+                        <div class="session-left-panel">
+                            <div class="job-title">* ${sessionInfo.job_title}</div>
+                            <div class="company-info">@ ${companyDisplay}</div>
+                            
+                            <div class="session-details-left">
+                                <div class="detail-item">
+                                    <span class="label">U</span>
+                                    <span class="value">${sessionInfo.user_details.name}</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="label">$</span>
+                                    <span class="value credits">${sessionInfo.credits_available}</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="label">D</span>
+                                    <span class="value">${createdDate}</span>
+                                </div>
+                            </div>
                         </div>
-                        <div class="detail-row">
-                            <span class="detail-label">💳 Credits:</span>
-                            <span class="detail-value credits-count">${sessionInfo.credits_available}</span>
-                        </div>
-                        <div class="detail-row">
-                            <span class="detail-label">📅 Created:</span>
-                            <span class="detail-value">${createdDate}</span>
-                        </div>
-                        <div class="detail-row">
-                            <span class="detail-label">📊 Status:</span>
-                            <span class="detail-value status-badge status-${sessionInfo.status}">${sessionInfo.status.toUpperCase()}</span>
-                        </div>
-                        <div class="detail-row full-width">
-                            <span class="detail-label">📝 Description:</span>
-                            <span class="detail-value job-desc">${jobDescPreview}</span>
-                        </div>
-                        <div class="detail-row">
-                            <span class="detail-label">🎯 Difficulty:</span>
-                            <span class="detail-value difficulty-badge">${sessionInfo.interview_config.difficulty}</span>
-                        </div>
-                        <div class="detail-row button-row">
-                            <button id="activateSessionBtn" class="compact-btn start-btn">
-                                <span class="material-icons">play_arrow</span>
-                                Start
-                            </button>
-                            <button id="disconnectSessionBtn" class="compact-btn disconnect-btn">
-                                <span class="material-icons">link_off</span>
-                                Disconnect
-                            </button>
-                            <button id="sessionCloseBtn" class="compact-btn close-btn" title="Close Application">
-                                <span class="material-icons">power_settings_new</span>
-                                Close
-                            </button>
-                        </div>
-                        <div class="detail-row full-width">
-                            <span class="detail-label">🔗 Session ID:</span>
-                            <span class="detail-value session-id">${sessionInfo.session_id.split('-')[0]}...</span>
+                        
+                        <div class="session-right-panel">
+                            <div class="session-details-right">
+                                <div class="detail-item">
+                                    <span class="label">S</span>
+                                    <span class="value status-active">${sessionInfo.status.toUpperCase()}</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="label">L</span>
+                                    <span class="value difficulty">${sessionInfo.interview_config.difficulty}</span>
+                                </div>
+                                <div class="detail-item session-id-item">
+                                    <span class="label">#</span>
+                                    <span class="value session-id">${sessionInfo.session_id.split('-')[0]}...</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -873,130 +874,272 @@ const sessionFlowStyles = `
     .session-connected-content {
         display: flex;
         flex-direction: column;
-        gap: 12px;
-        font-size: 12px;
+        gap: 2px;
+        font-size: 10px;
+        height: 100%;
+        padding: 0;
+        margin: 0;
     }
     
     .session-connection-header {
         display: flex;
-        align-items: flex-start;
-        gap: 12px;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 8px 2px 8px;
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
     }
     
-    .session-title-info h3 {
-        margin: 0;
-        font-size: 14px;
+    .header-action-buttons {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    
+    .btn-header {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 6px 12px;
+        font-size: 24px;
+        font-weight: 600;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        text-transform: none;
+        min-width: 56px;
+        height: 36px;
+        white-space: nowrap;
+    }
+    
+    .btn-header.start {
+        background: linear-gradient(135deg, var(--success), rgba(0, 200, 150, 0.8));
+        border-color: var(--success);
+        color: white;
+    }
+    
+    .btn-header.start:hover {
+        background: linear-gradient(135deg, rgba(0, 200, 150, 0.9), var(--success));
+        transform: translateY(-1px);
+        box-shadow: 0 2px 6px rgba(0, 200, 150, 0.3);
+    }
+    
+    .btn-header.disconnect {
+        background: linear-gradient(135deg, var(--warning), rgba(255, 165, 2, 0.8));
+        border-color: var(--warning);
+        color: white;
+    }
+    
+    .btn-header.disconnect:hover {
+        background: linear-gradient(135deg, rgba(255, 165, 2, 0.9), var(--warning));
+        transform: translateY(-1px);
+        box-shadow: 0 2px 6px rgba(255, 165, 2, 0.3);
+    }
+    
+    .btn-header.close {
+        background: linear-gradient(135deg, var(--danger), rgba(255, 71, 87, 0.8));
+        border-color: var(--danger);
+        color: white;
+    }
+    
+    .btn-header.close:hover {
+        background: linear-gradient(135deg, rgba(255, 71, 87, 0.9), var(--danger));
+        transform: translateY(-1px);
+        box-shadow: 0 2px 6px rgba(255, 71, 87, 0.3);
+    }
+    
+    .btn-header:disabled {
+        background: rgba(128, 128, 128, 0.3);
+        border-color: rgba(128, 128, 128, 0.3);
+        transform: none;
+        box-shadow: none;
+        cursor: not-allowed;
+        color: var(--text-muted);
+    }
+    
+    .session-main-content {
+        display: flex;
+        gap: 4px;
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+        padding: 0 4px 4px 4px;
+    }
+    
+    .session-left-panel {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-height: 0;
+    }
+    
+    .session-right-panel {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        justify-content: space-between;
+        min-height: 0;
+    }
+    
+    .job-title {
+        font-size: 16px;
         font-weight: 600;
         color: var(--success);
+        margin: 0;
+        line-height: 1.2;
     }
     
-    .session-company {
-        margin: 4px 0 0 0;
-        font-size: 11px;
+    .company-info {
+        font-size: 13px;
         color: var(--text-muted);
-        font-weight: 500;
+        margin: 0;
+        line-height: 1.2;
     }
     
-    .session-details-compact {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 4px 8px;
-        font-size: 10px;
+    .session-details-left,
+    .session-details-right {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
         background: rgba(0, 0, 0, 0.1);
-        padding: 8px;
+        padding: 4px;
         border-radius: 6px;
         border: 1px solid var(--border);
+        flex: 1;
+        min-height: 0;
     }
     
-    .detail-row {
+    .detail-item {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 2px 0;
+        gap: 4px;
     }
     
-    .detail-row.full-width {
-        grid-column: 1 / -1;
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 2px;
-        border-top: 1px solid var(--border);
-        padding-top: 6px;
-        margin-top: 4px;
-    }
-    
-    .detail-row.button-row {
-        grid-column: 1 / -1;
-        justify-content: center;
-        padding: 8px 0;
-        margin: 4px 0;
-        border-top: 1px solid rgba(255, 255, 255, 0.1);
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    }
-    
-    .detail-label {
-        font-weight: 500;
+    .detail-item .label {
+        font-size: 16px;
+        width: 24px;
+        text-align: center;
         color: var(--text-muted);
-        white-space: nowrap;
-        font-size: 10px;
     }
     
-    .detail-value {
+    .detail-item .value {
+        font-size: 15px;
         font-weight: 600;
         color: var(--text-primary);
+        flex: 1;
         text-align: right;
-        font-size: 10px;
     }
     
-    .detail-row.full-width .detail-value {
-        text-align: left;
-        font-size: 9px;
-        line-height: 1.3;
-        color: var(--text-secondary);
-    }
-    
-    .credits-count {
+    .detail-item .value.credits {
         background: var(--accent-secondary);
         color: white;
         padding: 2px 6px;
-        border-radius: 3px;
-        font-size: 9px;
+        border-radius: 4px;
+        font-size: 12px;
         font-weight: 700;
     }
     
-    .status-badge {
-        padding: 2px 4px;
-        border-radius: 3px;
-        font-size: 8px;
+    .detail-item .value.status-active {
+        background: rgba(0, 200, 150, 0.2);
+        color: var(--success);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 12px;
         font-weight: 700;
         text-transform: uppercase;
     }
     
-    .status-created {
-        background: rgba(0, 123, 255, 0.2);
-        color: var(--accent);
-    }
-    
-    .status-active {
-        background: rgba(0, 200, 150, 0.2);
-        color: var(--success);
-    }
-    
-    .difficulty-badge {
+    .detail-item .value.difficulty {
         background: rgba(255, 165, 2, 0.2);
         color: var(--warning);
-        padding: 2px 4px;
-        border-radius: 3px;
-        font-size: 8px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 12px;
         font-weight: 600;
     }
     
-    .session-id {
+    .detail-item .value.session-id {
         font-family: monospace;
         background: rgba(0, 0, 0, 0.1);
-        padding: 1px 4px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 10px;
+    }
+    
+    .session-id-item {
+        margin-top: auto;
+    }
+    
+    .action-buttons-compact {
+        display: flex;
+        gap: 2px;
+        justify-content: space-between;
+        flex-shrink: 0;
+        margin-top: auto;
+    }
+    
+    .btn-compact {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 1px;
+        padding: 3px 4px;
+        font-size: 7px;
+        font-weight: 600;
+        border: none;
         border-radius: 3px;
-        font-size: 8px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        text-transform: none;
+        flex: 1;
+        height: 20px;
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+    }
+    
+    .btn-compact.start {
+        background: linear-gradient(135deg, var(--success), rgba(0, 200, 150, 0.8));
+        color: white;
+    }
+    
+    .btn-compact.start:hover {
+        background: linear-gradient(135deg, rgba(0, 200, 150, 0.9), var(--success));
+        transform: translateY(-1px);
+        box-shadow: 0 2px 8px rgba(0, 200, 150, 0.3);
+    }
+    
+    .btn-compact.disconnect {
+        background: linear-gradient(135deg, var(--warning), rgba(255, 165, 2, 0.8));
+        color: white;
+    }
+    
+    .btn-compact.disconnect:hover {
+        background: linear-gradient(135deg, rgba(255, 165, 2, 0.9), var(--warning));
+        transform: translateY(-1px);
+        box-shadow: 0 2px 8px rgba(255, 165, 2, 0.3);
+    }
+    
+    .btn-compact.close {
+        background: linear-gradient(135deg, var(--danger), rgba(255, 71, 87, 0.8));
+        color: white;
+    }
+    
+    .btn-compact.close:hover {
+        background: linear-gradient(135deg, rgba(255, 71, 87, 0.9), var(--danger));
+        transform: translateY(-1px);
+        box-shadow: 0 2px 8px rgba(255, 71, 87, 0.3);
+    }
+    
+    .btn-compact:disabled {
+        background: rgba(128, 128, 128, 0.3);
+        transform: none;
+        box-shadow: none;
+        cursor: not-allowed;
     }
 
     .session-info-header {

@@ -1,8 +1,6 @@
 use std::env;
-use std::time::Duration;
-use tokio::time::sleep;
 
-use mockmate_lib::realtime_transcription::{init_transcription_service, start_microphone_transcription, get_transcription_status, stop_transcription};
+use mockmate_lib::realtime_transcription::get_transcription_status;
 
 #[tokio::main]
 async fn main() {

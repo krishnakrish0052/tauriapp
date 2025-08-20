@@ -431,13 +431,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            background: rgba(0, 0, 0, 0.60);
-            border-radius: 16px;
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.08);
             position: relative;
-            padding: 16px;
         }
         
         .session-connection-container::before {
@@ -451,36 +445,46 @@
         }
         
         .session-connection-panel {
-            background: rgba(255, 255, 255, 0.02);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 12px;
-            padding: 20px;
             width: 100%;
-            max-width: none;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.60);
+            border-radius: 16px;
             display: flex;
             flex-direction: column;
-            gap: 16px;
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
             position: relative;
-            z-index: 10;
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
+            padding: 20px;
+            box-sizing: border-box;
+            justify-content: center;
+            align-items: stretch;
+            gap: 16px;
         }
         
         .session-connection-header {
-            text-align: center;
             display: flex;
             flex-direction: row;
             align-items: center;
             justify-content: space-between;
             gap: 12px;
             position: relative;
+            margin-bottom: 8px;
         }
         
         .session-header-content {
             display: flex;
-            flex-direction: column;
+            flex-direction: row;
             align-items: center;
+            justify-content: flex-start;
+            gap: 16px;
             flex: 1;
+        }
+        
+        .session-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
         }
         
         .session-close-btn {
@@ -585,6 +589,8 @@
             align-items: center;
             justify-content: center;
             gap: 8px;
+            flex-shrink: 0;
+            min-width: 120px;
         }
         
         .session-btn:hover {
@@ -628,6 +634,245 @@
         .session-help .material-icons {
             font-size: 16px;
         }
+        
+        /* Session Connected State Styles */
+        .session-connected-content {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            height: 100%;
+            padding: 0;
+        }
+        
+        .session-connection-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 4px;
+            position: relative;
+        }
+        
+        .session-title-info {
+            margin-bottom: 4px;
+        }
+        
+        .session-title-info h3 {
+            margin: 0;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--success);
+            line-height: 1.2;
+        }
+        
+        .session-company {
+            margin: 1px 0 0 0;
+            font-size: 9px;
+            color: var(--text-muted);
+            font-weight: 500;
+            line-height: 1.1;
+        }
+        
+        .session-icon {
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--success);
+        }
+        
+        .session-icon .material-icons {
+            font-size: 16px;
+        }
+        
+        .session-title-info h3 {
+            margin: 0;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--success);
+            line-height: 1.2;
+        }
+        
+        .session-company {
+            margin: 2px 0 0 0;
+            font-size: 10px;
+            color: var(--text-muted);
+            font-weight: 500;
+            line-height: 1.1;
+        }
+        
+        .session-details-compact {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2px 6px;
+            font-size: 9px;
+            background: rgba(0, 0, 0, 0.1);
+            padding: 6px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1px 0;
+            min-height: 12px;
+        }
+        
+        .detail-row.full-width {
+            grid-column: 1 / -1;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 1px;
+            border-top: 1px solid var(--border);
+            padding-top: 3px;
+            margin-top: 2px;
+        }
+        
+        .detail-row.button-row {
+            grid-column: 1 / -1;
+            justify-content: center;
+            padding: 4px 0;
+            margin: 2px 0;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            gap: 4px;
+            display: flex;
+            flex-direction: row;
+        }
+        
+        .detail-label {
+            font-weight: 500;
+            color: var(--text-muted);
+            white-space: nowrap;
+            font-size: 8px;
+        }
+        
+        .detail-value {
+            font-weight: 600;
+            color: var(--text-primary);
+            text-align: right;
+            font-size: 8px;
+            line-height: 1.1;
+        }
+        
+        .detail-row.full-width .detail-value {
+            text-align: left;
+            font-size: 7px;
+            line-height: 1.2;
+            color: var(--text-secondary);
+            max-height: 14px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .credits-count {
+            background: var(--accent-secondary);
+            color: white;
+            padding: 1px 4px;
+            border-radius: 2px;
+            font-size: 7px;
+            font-weight: 700;
+        }
+        
+        .status-badge {
+            padding: 1px 3px;
+            border-radius: 2px;
+            font-size: 6px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        
+        .status-created {
+            background: rgba(0, 123, 255, 0.2);
+            color: var(--accent);
+        }
+        
+        .status-active {
+            background: rgba(0, 200, 150, 0.2);
+            color: var(--success);
+        }
+        
+        .difficulty-badge {
+            background: rgba(255, 165, 2, 0.2);
+            color: var(--warning);
+            padding: 1px 3px;
+            border-radius: 2px;
+            font-size: 6px;
+            font-weight: 600;
+        }
+        
+        .session-id {
+            font-family: monospace;
+            background: rgba(0, 0, 0, 0.1);
+            padding: 1px 3px;
+            border-radius: 2px;
+            font-size: 6px;
+        }
+        
+        .compact-btn {
+            background: rgba(0, 0, 0, 0.8);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-primary);
+            font-size: 8px;
+            font-weight: 500;
+            padding: 4px 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+            min-width: 50px;
+        }
+        
+        .compact-btn .material-icons {
+            font-size: 10px;
+        }
+        
+        .compact-btn:hover {
+            background: rgba(0, 0, 0, 0.9);
+            border-color: var(--border-active);
+            transform: translateY(-1px);
+        }
+        
+        .start-btn {
+            background: linear-gradient(135deg, var(--success), rgba(0, 200, 150, 0.8));
+            border-color: transparent;
+            color: white;
+        }
+        
+        .start-btn:hover {
+            background: linear-gradient(135deg, rgba(0, 200, 150, 0.9), var(--success));
+            box-shadow: 0 2px 8px rgba(0, 200, 150, 0.3);
+        }
+        
+        .disconnect-btn {
+            background: rgba(255, 71, 87, 0.1);
+            border-color: rgba(255, 71, 87, 0.3);
+            color: var(--danger);
+        }
+        
+        .disconnect-btn:hover {
+            background: rgba(255, 71, 87, 0.2);
+            border-color: var(--danger);
+        }
+        
+        .close-btn {
+            background: rgba(128, 128, 128, 0.1);
+            border-color: rgba(128, 128, 128, 0.3);
+            color: var(--text-muted);
+        }
+        
+        .close-btn:hover {
+            background: rgba(128, 128, 128, 0.2);
+            border-color: var(--text-muted);
+            color: var(--text-primary);
+        }
 
         @media (max-width: 768px) {
             .header { justify-content: center; }
@@ -660,10 +905,17 @@
             <div class="session-connection-panel" id="sessionConnectionPanel">
                 <div class="session-connection-header">
                     <div class="session-header-content">
-                        <div class="session-icon">
-                            <span class="material-icons">link</span>
+                        <div class="session-brand">
+                            <div class="logo">
+                                <img src="mockmate-logo.png" alt="MockMate" style="width: 32px; height: 32px; border-radius: 8px;">
+                            </div>
+                            <div>
+                                <h2 style="margin: 0; font-size: 18px; font-weight: 600;">
+                                    <span style="color: #ffffff;">Mock</span><span style="color: #ffd700;">Mate</span>
+                                </h2>
+                                <p style="margin: 0; font-size: 13px; color: var(--text-muted);">Connect to Session</p>
+                            </div>
                         </div>
-                        <h3>Connect to Session</h3>
                     </div>
                     <button id="sessionCloseBtn" class="session-close-btn" title="Close Application">
                         <span class="material-icons">power_settings_new</span>
@@ -695,7 +947,9 @@
                     <div class="logo">
                         <img src="mockmate-logo.png" alt="MockMate" style="width: 32px; height: 32px; border-radius: 8px;">
                     </div>
-                    <h2>MockMate</h2>
+                    <h2 style="margin: 0; font-size: 18px; font-weight: 600; background: none; -webkit-text-fill-color: initial; color: inherit;">
+                        <span style="color: #ffffff;">Mock</span><span style="color: #ffd700;">Mate</span>
+                    </h2>
                     <div class="status-pill">Live</div>
                 </div>
                 <div class="controls-bar">

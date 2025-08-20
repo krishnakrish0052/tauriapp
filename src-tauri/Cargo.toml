@@ -79,9 +79,6 @@ winapi = { version = "0.3", features = ["winuser", "oleauto", "combaseapi"] }
 # tesseract = "0.13"  # Requires system installation
 # rimage = "0.9"
 
-[[bin]]
-name = "simple_env_test"
-path = "tests/simple_env_test.rs"
 
 # Windows-specific dependencies for WASAPI loopback
 [target.'cfg(windows)'.dependencies]
