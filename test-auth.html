@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Desktop App Authentication Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        .test-section {
+            background: #2d2d2d;
+            border: 1px solid #444;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 10px 5px;
+            font-size: 16px;
+        }
+        button:hover { background: #2563eb; }
+        .result {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+            background: #333;
+        }
+        .success { border-left: 4px solid #22c55e; }
+        .error { border-left: 4px solid #ef4444; }
+        .info { border-left: 4px solid #3b82f6; }
+    </style>
+</head>
+<body>
+    <h1>🚀 Desktop App Authentication Test</h1>
+    
+    <div class="test-section">
+        <h3>1. Test Backend Connection</h3>
+        <button onclick="testBackend()">Test Backend API</button>
+        <div id="backendResult" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>2. Test Temp Token Generation</h3>
+        <input type="text" id="sessionId" placeholder="Session ID" value="38339bd4-94ec-49b8-ba87-b909fe334efd" style="width: 100%; padding: 10px; margin: 10px 0; background: #333; color: #fff; border: 1px solid #555; border-radius: 4px;">
+        <input type="text" id="authToken" placeholder="Auth Token" style="width: 100%; padding: 10px; margin: 10px 0; background: #333; color: #fff; border: 1px solid #555; border-radius: 4px;">
+        <br>
+        <button onclick="generateTempToken()">Generate Temp Token</button>
+        <div id="tokenResult" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>3. Test Protocol URL</h3>
+        <div id="protocolUrl" style="background: #333; padding: 15px; border-radius: 4px; margin: 10px 0; word-break: break-all;"></div>
+        <button onclick="testProtocol()">Launch Desktop App</button>
+        <button onclick="copyUrl()">Copy URL</button>
+        <div id="protocolResult" class="result"></div>
+    </div>
+
+    <script>
+        let tempToken = '';
+        let currentSessionId = '';
+
+        // Try to get auth token from localStorage
+        window.addEventListener('load', () => {
+            const storedToken = localStorage.getItem('auth_token');
+            if (storedToken) {
+                document.getElementById('authToken').value = storedToken;
+                log('tokenResult', 'Auto-filled auth token from localStorage', 'info');
+            }
+        });
+
+        function log(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            element.className = `result ${type}`;
+            element.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+        }
+
+        async function testBackend() {
+            log('backendResult', 'Testing backend connection...', 'info');
+            
+            try {
+                const response = await fetch('http://localhost:5000/api/health');
+                if (response.ok) {
+                    log('backendResult', '✅ Backend server is running', 'success');
+                } else {
+                    log('backendResult', '❌ Backend server responded with error: ' + response.status, 'error');
+                }
+            } catch (error) {
+                log('backendResult', '❌ Cannot connect to backend server: ' + error.message, 'error');
+            }
+        }
+
+        async function generateTempToken() {
+            const sessionId = document.getElementById('sessionId').value;
+            const authToken = document.getElementById('authToken').value;
+            
+            if (!sessionId || !authToken) {
+                log('tokenResult', '❌ Please enter session ID and auth token', 'error');
+                return;
+            }
+            
+            log('tokenResult', 'Generating temporary token...', 'info');
+            
+            try {
+                const response = await fetch(`http://localhost:5000/api/sessions/${sessionId}/generate-desktop-token`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({})
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `HTTP ${response.status}`);
+                }
+
+                const data = await response.json();
+                tempToken = data.tempToken;
+                currentSessionId = sessionId;
+                
+                log('tokenResult', `✅ Temp token generated: ${tempToken.substring(0, 8)}...`, 'success');
+                updateProtocolUrl();
+                
+            } catch (error) {
+                log('tokenResult', `❌ Failed to generate temp token: ${error.message}`, 'error');
+            }
+        }
+
+        function updateProtocolUrl() {
+            if (!currentSessionId || !tempToken) {
+                document.getElementById('protocolUrl').textContent = 'Generate temp token first';
+                return;
+            }
+
+            const params = new URLSearchParams();
+            params.append('temp_token', tempToken);
+            params.append('auto_fill', 'true');
+            params.append('auto_connect', 'true');
+            params.append('source', 'webapp');
+            params.append('timestamp', Date.now().toString());
+
+            const protocolUrl = `mockmate://session/${currentSessionId}?${params.toString()}`;
+            
+            // Display with masked token
+            const maskedUrl = protocolUrl.replace(/temp_token=[^&]+/, 'temp_token=***');
+            document.getElementById('protocolUrl').textContent = maskedUrl;
+            
+            window.currentProtocolUrl = protocolUrl;
+        }
+
+        function testProtocol() {
+            if (!window.currentProtocolUrl) {
+                log('protocolResult', '❌ Generate temp token first', 'error');
+                return;
+            }
+
+            try {
+                log('protocolResult', '🚀 Launching desktop app...', 'info');
+                window.location.href = window.currentProtocolUrl;
+                
+                setTimeout(() => {
+                    log('protocolResult', '✅ Protocol URL triggered - check if desktop app opened', 'success');
+                }, 500);
+                
+            } catch (error) {
+                log('protocolResult', `❌ Failed to launch: ${error.message}`, 'error');
+            }
+        }
+
+        function copyUrl() {
+            if (!window.currentProtocolUrl) {
+                log('protocolResult', '❌ No URL to copy', 'error');
+                return;
+            }
+
+            navigator.clipboard.writeText(window.currentProtocolUrl).then(() => {
+                log('protocolResult', '✅ Protocol URL copied to clipboard', 'success');
+            }).catch(error => {
+                log('protocolResult', `❌ Failed to copy: ${error.message}`, 'error');
+            });
+        }
+    </script>
+</body>
+</html>

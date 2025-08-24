@@ -71,6 +71,9 @@
     ],
     "windows": {
       "allowDowngrades": false,
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "http://timestamp.sectigo.com",
       "wix": {
         "language": "en-US"
       },
