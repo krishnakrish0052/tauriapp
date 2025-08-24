@@ -97,6 +97,8 @@ pub fn run() -> Result<()> {
             activate_web_session,
             get_session_info,
             handle_protocol_launch,
+            // Temporary token authentication
+            connect_with_temp_token,
             // New shared database session commands
             connect_session,
             activate_session_cmd,
@@ -122,7 +124,10 @@ pub fn run() -> Result<()> {
             move_window_relative,
             resize_window_scale,
             show_main_window,
-            hide_main_window
+            hide_main_window,
+            // Database diagnostics
+            diagnose_database,
+            test_session_query
         ])
         .manage(AppState::new())
         .setup(|app| {
@@ -146,7 +151,10 @@ pub fn run() -> Result<()> {
                     
                     // Extract query parameters if present
                     let mut token: Option<String> = None;
+                    let mut temp_token: Option<String> = None;
                     let mut user_id: Option<String> = None;
+                    let mut auto_connect: Option<bool> = None;
+                    let mut auto_fill: Option<bool> = None;
                     
                     if parts.len() > 1 {
                         for param in parts[1].split('&') {
@@ -154,18 +162,24 @@ pub fn run() -> Result<()> {
                             if kv.len() == 2 {
                                 match kv[0] {
                                     "token" => token = Some(urlencoding::decode(kv[1]).unwrap_or_default().to_string()),
+                                    "temp_token" => temp_token = Some(urlencoding::decode(kv[1]).unwrap_or_default().to_string()),
                                     "user_id" => user_id = Some(urlencoding::decode(kv[1]).unwrap_or_default().to_string()),
+                                    "auto_connect" => auto_connect = Some(kv[1] == "true"),
+                                    "auto_fill" => auto_fill = Some(kv[1] == "true"),
                                     _ => {}
                                 }
                             }
                         }
                     }
                     
+                    info!("Protocol launch parameters: temp_token={}, auto_connect={:?}, auto_fill={:?}", 
+                          temp_token.is_some(), auto_connect, auto_fill);
+                    
                     // Handle the protocol launch with a slight delay to ensure app is fully initialized
                     let app_handle = app.handle().clone();
                     tokio::spawn(async move {
                         tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-                        if let Err(e) = handle_protocol_launch(session_id, token, user_id, app_handle) {
+                        if let Err(e) = handle_protocol_launch_with_temp_token(session_id, token, temp_token, user_id, auto_connect, auto_fill, app_handle).await {
                             error!("Failed to handle protocol launch: {}", e);
                         }
                     });
@@ -278,6 +292,22 @@ struct SessionConnectionPayload {
 struct SessionActivationResponse {
     success: bool,
     message: String,
+    session: Option<SessionData>,
+    remaining_credits: Option<u32>,
+}
+
+// Temporary token authentication structures
+#[derive(Serialize, Deserialize)]
+struct TempTokenAuthPayload {
+    session_id: String,
+    temp_token: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct TempTokenAuthResponse {
+    success: bool,
+    message: String,
+    user_id: Option<String>,
     session: Option<SessionData>,
     remaining_credits: Option<u32>,
 }
@@ -1741,6 +1771,91 @@ async fn disconnect_session(session_id: String) -> Result<String, String> {
     disconnect_session_cmd(session_id).await
 }
 
+// Diagnostic command for database connectivity
+#[derive(Serialize, Deserialize)]
+struct DatabaseDiagnostic {
+    database_connected: bool,
+    connection_error: Option<String>,
+    tables_exist: bool,
+    sample_data_count: Option<i64>,
+    test_query_result: Option<String>,
+}
+
+#[tauri::command]
+async fn diagnose_database() -> Result<DatabaseDiagnostic, String> {
+    info!("🔍 Running database diagnostics");
+    
+    let mut diagnostic = DatabaseDiagnostic {
+        database_connected: false,
+        connection_error: None,
+        tables_exist: false,
+        sample_data_count: None,
+        test_query_result: None,
+    };
+    
+    // Test database initialization
+    match crate::database::initialize_database().await {
+        Ok(()) => {
+            diagnostic.database_connected = true;
+            
+            // Test if tables exist by trying to query sessions table
+            match crate::database::shared::DATABASE_POOL.get().await {
+                Ok(client) => {
+                    // Check if sessions table exists and get count
+                    match client.query_one("SELECT COUNT(*) as count FROM sessions", &[]).await {
+                        Ok(row) => {
+                            diagnostic.tables_exist = true;
+                            let count: i64 = row.get("count");
+                            diagnostic.sample_data_count = Some(count);
+                            diagnostic.test_query_result = Some(format!("Found {} sessions in database", count));
+                            info!("✅ Database diagnostic passed: {} sessions found", count);
+                        }
+                        Err(e) => {
+                            diagnostic.test_query_result = Some(format!("Table query failed: {}", e));
+                            warn!("⚠️ Sessions table query failed: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    diagnostic.connection_error = Some(format!("Pool connection failed: {}", e));
+                    warn!("⚠️ Database pool connection failed: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            diagnostic.connection_error = Some(e.clone());
+            warn!("⚠️ Database initialization failed: {}", e);
+        }
+    }
+    
+    Ok(diagnostic)
+}
+
+#[tauri::command]
+async fn test_session_query(session_id: String) -> Result<String, String> {
+    info!("🧪 Testing session query for ID: {}", session_id);
+    
+    // First run diagnostic
+    let diagnostic = diagnose_database().await?;
+    if !diagnostic.database_connected {
+        return Err(format!("Database not connected: {}", diagnostic.connection_error.unwrap_or("Unknown error".to_string())));
+    }
+    
+    // Try to get session info
+    match crate::database::get_session_with_user_info(&session_id).await {
+        Ok(session_info) => {
+            Ok(format!("✅ Session found: {} (User: {}, Credits: {})", 
+                session_info.session_name, 
+                session_info.user_details.name,
+                session_info.credits_available
+            ))
+        }
+        Err(e) => {
+            Err(format!("❌ Session query failed: {}", e))
+        }
+    }
+}
+
 // Timer management command
 
 #[derive(Serialize, Deserialize)]
@@ -2674,44 +2789,157 @@ fn extract_confidence_from_text(text: &str) -> f32 {
     0.75
 }
 
-// Helper function to get environment variables with compile-time fallbacks
+// Helper function to get environment variables using runtime loading
 fn get_env_var(key: &str) -> Option<String> {
-    // First try build-time embedded variable (set by build.rs via cargo:rustc-env)
-    // These variables are embedded in the binary during compilation
-    let embedded_value = match key {
-        "DEEPGRAM_API_KEY" => env!("DEEPGRAM_API_KEY"),
-        "OPENAI_API_KEY" => env!("OPENAI_API_KEY"),
-        "POLLINATIONS_API_KEY" => env!("POLLINATIONS_API_KEY"),
-        "POLLINATIONS_REFERER" => env!("POLLINATIONS_REFERER"),
-        "DEEPGRAM_MODEL" => env!("DEEPGRAM_MODEL"),
-        "DEEPGRAM_LANGUAGE" => env!("DEEPGRAM_LANGUAGE"),
-        "DEEPGRAM_ENDPOINTING" => env!("DEEPGRAM_ENDPOINTING"),
-        "DEEPGRAM_INTERIM_RESULTS" => env!("DEEPGRAM_INTERIM_RESULTS"),
-        "DEEPGRAM_SMART_FORMAT" => env!("DEEPGRAM_SMART_FORMAT"),
-        "DEEPGRAM_KEEP_ALIVE" => env!("DEEPGRAM_KEEP_ALIVE"),
-        "DEEPGRAM_PUNCTUATE" => env!("DEEPGRAM_PUNCTUATE"),
-        "DEEPGRAM_PROFANITY_FILTER" => env!("DEEPGRAM_PROFANITY_FILTER"),
-        "DEEPGRAM_DIARIZE" => env!("DEEPGRAM_DIARIZE"),
-        "DEEPGRAM_MULTICHANNEL" => env!("DEEPGRAM_MULTICHANNEL"),
-        "DEEPGRAM_NUMERALS" => env!("DEEPGRAM_NUMERALS"),
-        "DB_HOST" => env!("DB_HOST"),
-        "DB_PORT" => env!("DB_PORT"),
-        "DB_NAME" => env!("DB_NAME"),
-        "DB_USER" => env!("DB_USER"),
-        "DB_PASSWORD" => env!("DB_PASSWORD"),
-        _ => return None,
-    };
+    // Load .env file if it exists for development
+    let _ = dotenvy::dotenv();
     
-    // Convert embedded value to String, return None if empty
-    if embedded_value.is_empty() {
-        // Try runtime environment variable as fallback (for development)
-        if let Ok(value) = std::env::var(key) {
+    // Try runtime environment variable first
+    if let Ok(value) = std::env::var(key) {
+        if !value.is_empty() {
             return Some(value);
         }
-        None
-    } else {
-        Some(embedded_value.to_string())
     }
+    
+    // Try compile-time embedded variables as fallback (only if they were set during build)
+    // Use option_env!() instead of env!() to avoid compile-time errors
+    let embedded_value = match key {
+        "DEEPGRAM_API_KEY" => option_env!("DEEPGRAM_API_KEY"),
+        "OPENAI_API_KEY" => option_env!("OPENAI_API_KEY"),
+        "POLLINATIONS_API_KEY" => option_env!("POLLINATIONS_API_KEY"),
+        "POLLINATIONS_REFERER" => option_env!("POLLINATIONS_REFERER"),
+        "DEEPGRAM_MODEL" => option_env!("DEEPGRAM_MODEL"),
+        "DEEPGRAM_LANGUAGE" => option_env!("DEEPGRAM_LANGUAGE"),
+        "DEEPGRAM_ENDPOINTING" => option_env!("DEEPGRAM_ENDPOINTING"),
+        "DEEPGRAM_INTERIM_RESULTS" => option_env!("DEEPGRAM_INTERIM_RESULTS"),
+        "DEEPGRAM_SMART_FORMAT" => option_env!("DEEPGRAM_SMART_FORMAT"),
+        "DEEPGRAM_KEEP_ALIVE" => option_env!("DEEPGRAM_KEEP_ALIVE"),
+        "DEEPGRAM_PUNCTUATE" => option_env!("DEEPGRAM_PUNCTUATE"),
+        "DEEPGRAM_PROFANITY_FILTER" => option_env!("DEEPGRAM_PROFANITY_FILTER"),
+        "DEEPGRAM_DIARIZE" => option_env!("DEEPGRAM_DIARIZE"),
+        "DEEPGRAM_MULTICHANNEL" => option_env!("DEEPGRAM_MULTICHANNEL"),
+        "DEEPGRAM_NUMERALS" => option_env!("DEEPGRAM_NUMERALS"),
+        "DB_HOST" => option_env!("DB_HOST"),
+        "DB_PORT" => option_env!("DB_PORT"),
+        "DB_NAME" => option_env!("DB_NAME"),
+        "DB_USER" => option_env!("DB_USER"),
+        "DB_PASSWORD" => option_env!("DB_PASSWORD"),
+        _ => None,
+    };
+    
+    // Return embedded value if it exists and is not empty
+    if let Some(value) = embedded_value {
+        if !value.is_empty() {
+            return Some(value.to_string());
+        }
+    }
+    
+    None
+}
+
+// Helper function to handle protocol launch with temporary tokens
+async fn handle_protocol_launch_with_temp_token(
+    session_id: String,
+    _token: Option<String>, 
+    temp_token: Option<String>,
+    _user_id: Option<String>,
+    auto_connect: Option<bool>,
+    _auto_fill: Option<bool>,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    info!("🚀 Protocol launch with temp token for session: {}", session_id);
+    
+    // Bring the main window to front and focus
+    if let Some(main_window) = app_handle.get_webview_window("main") {
+        if let Err(e) = main_window.show() {
+            error!("Failed to show main window: {}", e);
+        }
+        if let Err(e) = main_window.set_focus() {
+            error!("Failed to focus main window: {}", e);
+        }
+    }
+    
+    // If we have a temp token and auto_connect is enabled, authenticate automatically
+    if let (Some(temp_token), Some(true)) = (temp_token.clone(), auto_connect) {
+        info!("🔐 Auto-authenticating with temporary token...");
+        
+        let auth_payload = TempTokenAuthPayload {
+            session_id: session_id.clone(),
+            temp_token: temp_token.clone(),
+        };
+        
+        match connect_with_temp_token(auth_payload).await {
+            Ok(auth_response) => {
+                if auth_response.success {
+                    info!("✅ Auto-authentication successful!");
+                    
+                    // Emit successful authentication event to frontend
+                    let auth_event_data = serde_json::json!({
+                        "type": "temp-token-auth-success",
+                        "session_id": session_id,
+                        "user_id": auth_response.user_id,
+                        "session": auth_response.session,
+                        "remaining_credits": auth_response.remaining_credits,
+                        "auto_authenticated": true,
+                        "launched_at": chrono::Utc::now().to_rfc3339()
+                    });
+                    
+                    if let Err(e) = app_handle.emit("temp-token-auth-result", auth_event_data) {
+                        error!("Failed to emit temp-token-auth-result event: {}", e);
+                    }
+                } else {
+                    warn!("❌ Auto-authentication failed: {}", auth_response.message);
+                    
+                    // Emit failed authentication event
+                    let auth_event_data = serde_json::json!({
+                        "type": "temp-token-auth-failed",
+                        "session_id": session_id,
+                        "error": auth_response.message,
+                        "auto_authenticated": true,
+                        "launched_at": chrono::Utc::now().to_rfc3339()
+                    });
+                    
+                    if let Err(e) = app_handle.emit("temp-token-auth-result", auth_event_data) {
+                        error!("Failed to emit temp-token-auth-result event: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                error!("❌ Auto-authentication error: {}", e);
+                
+                // Emit error authentication event
+                let auth_event_data = serde_json::json!({
+                    "type": "temp-token-auth-error",
+                    "session_id": session_id,
+                    "error": e,
+                    "auto_authenticated": true,
+                    "launched_at": chrono::Utc::now().to_rfc3339()
+                });
+                
+                if let Err(emit_err) = app_handle.emit("temp-token-auth-result", auth_event_data) {
+                    error!("Failed to emit temp-token-auth-result event: {}", emit_err);
+                }
+            }
+        }
+    } else {
+        info!("📋 No auto-authentication - sending session launch data to frontend");
+        
+        // Send session launch data with temp token to frontend for manual handling
+        let session_launch_data = serde_json::json!({
+            "type": "session-launch",
+            "session_id": session_id,
+            "temp_token": temp_token,
+            "auto_connect": auto_connect,
+            "launched_at": chrono::Utc::now().to_rfc3339()
+        });
+        
+        if let Err(e) = app_handle.emit("session-launch", session_launch_data) {
+            error!("Failed to emit session-launch event: {}", e);
+        }
+    }
+    
+    info!("✅ Protocol launch with temp token handled successfully");
+    Ok(())
 }
 
 // Helper function to log environment variable status
@@ -2768,6 +2996,86 @@ fn log_environment_status() {
     }
     
     info!("🔧 Environment configuration check complete (build-time embedded + runtime fallback)");
+}
+
+// Temporary token authentication command
+#[tauri::command]
+async fn connect_with_temp_token(payload: TempTokenAuthPayload) -> Result<TempTokenAuthResponse, String> {
+    info!("🔐 Authenticating with temporary token for session: {}", payload.session_id);
+    
+    // Prepare the request
+    let backend_url = get_env_var("BACKEND_URL")
+        .unwrap_or_else(|| "http://localhost:3001".to_string());
+    let endpoint = format!("{}/api/sessions/{}/connect-with-temp-token", backend_url, payload.session_id);
+    
+    info!("📡 Sending temp token auth request to: {}", endpoint);
+    
+    // Create the request payload
+    let request_body = serde_json::json!({
+        "temp_token": payload.temp_token
+    });
+    
+    // Make the HTTP request
+    let client = reqwest::Client::new();
+    match client
+        .post(&endpoint)
+        .header("Content-Type", "application/json")
+        .json(&request_body)
+        .send()
+        .await
+    {
+        Ok(response) => {
+            let status = response.status();
+            info!("📡 Received response with status: {}", status);
+            
+            if status.is_success() {
+                match response.json::<TempTokenAuthResponse>().await {
+                    Ok(auth_response) => {
+                        if auth_response.success {
+                            info!("✅ Temporary token authentication successful!");
+                            info!("👤 Authenticated user: {:?}", auth_response.user_id);
+                            info!("💳 Remaining credits: {:?}", auth_response.remaining_credits);
+                        } else {
+                            warn!("❌ Authentication failed: {}", auth_response.message);
+                        }
+                        Ok(auth_response)
+                    }
+                    Err(e) => {
+                        let error_msg = format!("Failed to parse authentication response: {}", e);
+                        error!("❌ {}", error_msg);
+                        Err(error_msg)
+                    }
+                }
+            } else {
+                // Handle HTTP error status
+                let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                let error_msg = format!("Authentication failed with status {}: {}", status, error_text);
+                error!("❌ {}", error_msg);
+                
+                // Return a failed response instead of an error for better UX
+                Ok(TempTokenAuthResponse {
+                    success: false,
+                    message: error_msg,
+                    user_id: None,
+                    session: None,
+                    remaining_credits: None,
+                })
+            }
+        }
+        Err(e) => {
+            let error_msg = format!("Network error during authentication: {}", e);
+            error!("❌ {}", error_msg);
+            
+            // Return a failed response instead of an error for better UX
+            Ok(TempTokenAuthResponse {
+                success: false,
+                message: error_msg,
+                user_id: None,
+                session: None,
+                remaining_credits: None,
+            })
+        }
+    }
 }
 
 

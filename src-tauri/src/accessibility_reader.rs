@@ -11,7 +11,6 @@ use windows_sys::Win32::{
         WindowsAndMessaging::{
             GetWindowTextW, EnumWindows, IsWindowVisible,
             SendMessageW, WM_GETTEXT, GetClassNameW,
-            GetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE
         },
     },
     System::{
@@ -21,7 +20,7 @@ use windows_sys::Win32::{
     },
 };
 use winapi::um::{
-    winuser::{GetWindowThreadProcessId, GetForegroundWindow, SetWindowPos, HWND_TOPMOST, HWND_NOTOPMOST, SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE},
+    winuser::{GetWindowThreadProcessId, GetForegroundWindow},
 };
 
 /// Configuration for accessibility text reading
@@ -1540,7 +1539,7 @@ impl WindowsAccessibilityReader {
     }
     
     /// OCR fallback for visual content
-    fn extract_text_ocr_fallback(&self, hwnd: HWND) -> Result<String> {
+    fn extract_text_ocr_fallback(&self, _hwnd: HWND) -> Result<String> {
         info!("📸 OCR fallback starting...");
         
         // This would integrate with Windows OCR API or similar

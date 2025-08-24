@@ -587,27 +587,133 @@ Provide only the JSON response, no other text.",
     }
 
     fn build_system_prompt(&self, context: &super::openai::InterviewContext) -> String {
-        let mut prompt = String::from("You are an AI interview assistant helping a candidate prepare for their interview. Provide clear, professional, and comprehensive answers to interview questions.");
-
+        let mut prompt = String::new();
+        
+        // Core role and personality
+        prompt.push_str("You are an expert interview coach and career advisor. Your role is to help the candidate succeed by providing thoughtful, authentic, and compelling answers that showcase their qualifications naturally.");
+        
+        // Personalized greeting if user name is available
+        if let Some(user_name) = &context.user_name {
+            prompt.push_str(&format!("\n\nYou are specifically assisting {}.", user_name.trim()));
+        }
+        
+        // Interview context section
+        prompt.push_str("\n\n=== INTERVIEW CONTEXT ===");
+        
         if let Some(company) = &context.company {
-            prompt.push_str(&format!("\n\nCompany: {}", company));
+            prompt.push_str(&format!("\nTarget Company: {}", company));
+            prompt.push_str(&format!("\n• Tailor your responses to align with {}'s values, culture, and industry reputation", company));
+            prompt.push_str(&format!("\n• Reference {}'s known projects, initiatives, or business model when relevant", company));
         }
-
+        
         if let Some(position) = &context.position {
-            prompt.push_str(&format!("\nPosition: {}", position));
+            prompt.push_str(&format!("\nRole: {}", position));
+            prompt.push_str(&format!("\n• Focus on skills and experiences directly relevant to {} responsibilities", position));
+            prompt.push_str(&format!("\n• Demonstrate understanding of what success looks like in this {} role", position));
         }
-
+        
+        // Difficulty and experience level customization
+        if let Some(difficulty) = &context.difficulty_level {
+            match difficulty.to_lowercase().as_str() {
+                "entry" | "junior" | "beginner" => {
+                    prompt.push_str("\nExperience Level: Entry-Level/Junior");
+                    prompt.push_str("\n• Emphasize learning agility, academic projects, internships, and personal projects");
+                    prompt.push_str("\n• Show enthusiasm and coachability rather than extensive experience");
+                    prompt.push_str("\n• Highlight transferable skills and potential for growth");
+                }
+                "mid" | "intermediate" | "medium" => {
+                    prompt.push_str("\nExperience Level: Mid-Level");
+                    prompt.push_str("\n• Balance proven experience with continued learning and growth mindset");
+                    prompt.push_str("\n• Demonstrate leadership potential and cross-functional collaboration");
+                    prompt.push_str("\n• Show progression in responsibilities and impact");
+                }
+                "senior" | "advanced" | "high" => {
+                    prompt.push_str("\nExperience Level: Senior-Level");
+                    prompt.push_str("\n• Emphasize strategic thinking, team leadership, and business impact");
+                    prompt.push_str("\n• Demonstrate ability to mentor others and drive organizational change");
+                    prompt.push_str("\n• Focus on scalable solutions and long-term vision");
+                }
+                _ => {
+                    prompt.push_str(&format!("\nDifficulty Level: {}", difficulty));
+                }
+            }
+        }
+        
+        if let Some(session_type) = &context.session_type {
+            prompt.push_str(&format!("\nInterview Type: {}", session_type));
+            match session_type.to_lowercase().as_str() {
+                "behavioral" => {
+                    prompt.push_str("\n• Use STAR method (Situation, Task, Action, Result) for storytelling");
+                    prompt.push_str("\n• Focus on specific examples that demonstrate soft skills and cultural fit");
+                }
+                "technical" => {
+                    prompt.push_str("\n• Provide clear, logical explanations with step-by-step reasoning");
+                    prompt.push_str("\n• Consider trade-offs, edge cases, and scalability when relevant");
+                }
+                "case" | "case study" => {
+                    prompt.push_str("\n• Structure responses with clear problem-solving frameworks");
+                    prompt.push_str("\n• Ask clarifying questions and state assumptions explicitly");
+                }
+                _ => {}
+            }
+        }
+        
         if let Some(job_description) = &context.job_description {
-            prompt.push_str(&format!("\nJob Description: {}", job_description));
+            if !job_description.is_empty() {
+                let job_desc_summary = if job_description.len() > 300 {
+                    format!("{}...", &job_description[..300])
+                } else {
+                    job_description.clone()
+                };
+                prompt.push_str(&format!("\n\nJob Description Summary: {}", job_desc_summary));
+                prompt.push_str("\n• Align your responses with the specific requirements and qualifications mentioned");
+            }
         }
-
-        prompt.push_str("\n\nGuidelines for your responses:");
-        prompt.push_str("\n- Provide structured, well-organized answers");
-        prompt.push_str("\n- Include specific examples when relevant");
-        prompt.push_str("\n- Keep responses professional and concise");
-        prompt.push_str("\n- Focus on demonstrating relevant skills and experience");
-        prompt.push_str("\n- Use the STAR method (Situation, Task, Action, Result) for behavioral questions when appropriate");
-
+        
+        // Resume context if available
+        if let Some(resume) = &context.resume_content {
+            if !resume.is_empty() {
+                prompt.push_str("\n\n=== CANDIDATE BACKGROUND ===\n");
+                let resume_summary = if resume.len() > 500 {
+                    format!("{}...", &resume[..500])
+                } else {
+                    resume.clone()
+                };
+                prompt.push_str(&format!("Resume Summary: {}", resume_summary));
+                prompt.push_str("\n• Draw from this background to provide authentic, personalized responses");
+                prompt.push_str("\n• Reference specific experiences, skills, and achievements when relevant");
+            }
+        }
+        
+        // Response style guidelines
+        prompt.push_str("\n\n=== RESPONSE GUIDELINES ===");
+        prompt.push_str("\n\n🎯 AUTHENTICITY & TONE:");
+        prompt.push_str("\n• Write as if you're the candidate speaking naturally and confidently");
+        prompt.push_str("\n• Use first person (\"I\", \"my\", \"we\") to make responses personal and engaging");
+        prompt.push_str("\n• Match the energy and professionalism appropriate for the role and company");
+        prompt.push_str("\n• Avoid robotic or templated language - sound human and genuine");
+        
+        prompt.push_str("\n\n📝 STRUCTURE & CONTENT:");
+        prompt.push_str("\n• Lead with confidence: start with a clear, direct response to the question");
+        prompt.push_str("\n• Support with specifics: provide concrete examples, metrics, or scenarios");
+        prompt.push_str("\n• Connect to value: explicitly link your response to how you'd contribute to their team");
+        prompt.push_str("\n• Keep it conversational: aim for 30-90 seconds when spoken aloud");
+        
+        prompt.push_str("\n\n🚀 STRATEGIC APPROACH:");
+        prompt.push_str("\n• Turn every question into an opportunity to demonstrate value and fit");
+        prompt.push_str("\n• Show don't just tell: use specific stories and examples to illustrate points");
+        prompt.push_str("\n• Address potential concerns proactively while staying positive");
+        prompt.push_str("\n• End responses with forward momentum or a thoughtful question when appropriate");
+        
+        // Interview type specific guidance
+        prompt.push_str("\n\n💡 QUESTION TYPE ADAPTATIONS:");
+        prompt.push_str("\n• Behavioral: Use STAR method but make it conversational, not mechanical");
+        prompt.push_str("\n• Technical: Explain your thinking process, consider alternatives, show expertise depth");
+        prompt.push_str("\n• Hypothetical: Think out loud, ask clarifying questions, show problem-solving approach");
+        prompt.push_str("\n• Culture/Fit: Be authentic about values while showing genuine enthusiasm for their mission");
+        
+        prompt.push_str("\n\nRemember: Your goal is to help the candidate sound competent, confident, and genuinely excited about the opportunity while being completely authentic to who they are as a professional.");
+        
         prompt
     }
 
@@ -974,41 +1080,10 @@ Please provide a comprehensive and professional answer to this interview questio
     }
 
     pub async fn fetch_available_models(&self) -> Result<Vec<PollinationsModel>> {
-        let url = format!("{}/models", self.base_url);
-        info!("Fetching models from: {}", url);
-        
-        let response = self
-            .client
-            .get(&url)
-            .header("User-Agent", "MockMate/1.0")
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let err_text = response.text().await.unwrap_or_default();
-            error!("Failed to fetch models: HTTP {} - {}", status, err_text);
-            return self.get_fallback_models();
-        }
-
-        let response_text = response.text().await?;
-        info!("Raw models response length: {} chars", response_text.len());
-        
-        // Try to parse as JSON array of model objects
-        match serde_json::from_str::<Vec<ModelInfo>>(&response_text) {
-            Ok(model_infos) => {
-                let mut models: Vec<PollinationsModel> = Vec::new();
-                for model_info in model_infos {
-                    models.push(PollinationsModel::Custom(model_info.name));
-                }
-                info!("Successfully parsed {} models from API", models.len());
-                Ok(models)
-            }
-            Err(e) => {
-                error!("Failed to parse models JSON: {}", e);
-                self.get_fallback_models()
-            }
-        }
+        // The Pollinations API doesn't have a /models endpoint that lists available models
+        // So we'll use the known working models directly
+        info!("Using predefined Pollinations models (API doesn't provide /models endpoint)");
+        self.get_fallback_models()
     }
     
     fn get_fallback_models(&self) -> Result<Vec<PollinationsModel>> {

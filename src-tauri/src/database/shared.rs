@@ -4,7 +4,6 @@ use tokio_postgres::NoTls;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use chrono::{DateTime, Utc, NaiveDateTime, TimeZone};
-use std::env;
 use crate::get_env_var;
 
 // Database connection pool - shared globally
@@ -130,12 +129,22 @@ pub async fn get_session_with_user_info(session_id: &str) -> Result<SessionWithU
         WHERE s.id = $1
     "#;
     
-    let row = client.query_one(query, &[&session_uuid]).await.map_err(|e| {
-        match e.code() {
-            Some(&tokio_postgres::error::SqlState::NO_DATA_FOUND) => "Session not found".to_string(),
-            _ => format!("Database query error: {}", e)
-        }
+    let rows = client.query(query, &[&session_uuid]).await.map_err(|e| {
+        log::error!("Database query failed: {}", e);
+        format!("Database query error: {}", e)
     })?;
+    
+    if rows.is_empty() {
+        log::warn!("Session not found: {}", session_id);
+        return Err("Session not found".to_string());
+    }
+    
+    if rows.len() > 1 {
+        log::error!("Multiple sessions found for ID {}: {} rows returned", session_id, rows.len());
+        return Err(format!("Multiple sessions found for ID {} (database consistency error)", session_id));
+    }
+    
+    let row = &rows[0];
     
     let first_name: String = row.get("first_name");
     let last_name: String = row.get("last_name");
@@ -302,19 +311,37 @@ pub async fn get_session_info(session_id: &str) -> Result<Session, String> {
     Ok(session)
 }
 
-// Initialize database on app startup
+// Initialize database on app startup (optional - gracefully handles failures)
 pub async fn initialize_database() -> Result<(), String> {
     // Load environment variables
     dotenvy::dotenv().ok(); // Don't fail if .env doesn't exist
     
-    // Test the connection
+    // Test the connection - but make it optional for development
     let pool = &*DATABASE_POOL;
-    let client = pool.get().await.map_err(|e| format!("Failed to connect to database: {}", e))?;
-    
-    // Simple ping query
-    client.query_one("SELECT 1 as ping", &[]).await
-        .map_err(|e| format!("Database ping failed: {}", e))?;
-    
-    println!("✅ Successfully connected to PostgreSQL database");
-    Ok(())
+    match pool.get().await {
+        Ok(client) => {
+            // Try a simple ping query
+            match client.query_one("SELECT 1 as ping", &[]).await {
+                Ok(_) => {
+                    log::info!("✅ Successfully connected to PostgreSQL database");
+                    Ok(())
+                }
+                Err(e) => {
+                    log::warn!("⚠️ Database ping failed: {}", e);
+                    log::warn!("💡 Database features will be disabled. App will continue without database.");
+                    Ok(()) // Don't fail the app if database is not available
+                }
+            }
+        }
+        Err(e) => {
+            log::warn!("⚠️ Failed to connect to database: {}", e);
+            log::warn!("💡 Database features will be disabled. App will continue without database.");
+            log::info!("🔧 To enable database features, ensure PostgreSQL is running with:");
+            log::info!("   Host: {}", get_env_var("DB_HOST").unwrap_or_else(|| "localhost".to_string()));
+            log::info!("   Port: {}", get_env_var("DB_PORT").unwrap_or_else(|| "5432".to_string()));
+            log::info!("   Database: {}", get_env_var("DB_NAME").unwrap_or_else(|| "mockmate_db".to_string()));
+            log::info!("   User: {}", get_env_var("DB_USER").unwrap_or_else(|| "mockmate_user".to_string()));
+            Ok(()) // Don't fail the app if database is not available
+        }
+    }
 }
