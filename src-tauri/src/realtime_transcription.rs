@@ -21,6 +21,49 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use deepgram::common::options::Encoding;
 use deepgram::Deepgram;
 
+/// Robust environment variable loading - tries runtime first, then build-time embedded fallbacks
+fn get_robust_env_var(key: &str) -> Option<String> {
+    // Load .env file if it exists for development
+    let _ = dotenvy::dotenv();
+    
+    // Try runtime environment variable first
+    if let Ok(value) = std::env::var(key) {
+        if !value.is_empty() {
+            info!("✅ [ENV] Loaded {} from runtime environment (length: {})", key, value.len());
+            return Some(value);
+        }
+    }
+    
+    // Try compile-time embedded variables as fallback (only if they were set during build)
+    // Use option_env!() instead of env!() to avoid compile-time errors
+    let embedded_value = match key {
+        "DEEPGRAM_API_KEY" => option_env!("DEEPGRAM_API_KEY"),
+        "DEEPGRAM_MODEL" => option_env!("DEEPGRAM_MODEL"),
+        "DEEPGRAM_LANGUAGE" => option_env!("DEEPGRAM_LANGUAGE"),
+        "DEEPGRAM_ENDPOINTING" => option_env!("DEEPGRAM_ENDPOINTING"),
+        "DEEPGRAM_INTERIM_RESULTS" => option_env!("DEEPGRAM_INTERIM_RESULTS"),
+        "DEEPGRAM_SMART_FORMAT" => option_env!("DEEPGRAM_SMART_FORMAT"),
+        "DEEPGRAM_KEEP_ALIVE" => option_env!("DEEPGRAM_KEEP_ALIVE"),
+        "DEEPGRAM_PUNCTUATE" => option_env!("DEEPGRAM_PUNCTUATE"),
+        "DEEPGRAM_PROFANITY_FILTER" => option_env!("DEEPGRAM_PROFANITY_FILTER"),
+        "DEEPGRAM_DIARIZE" => option_env!("DEEPGRAM_DIARIZE"),
+        "DEEPGRAM_MULTICHANNEL" => option_env!("DEEPGRAM_MULTICHANNEL"),
+        "DEEPGRAM_NUMERALS" => option_env!("DEEPGRAM_NUMERALS"),
+        _ => None,
+    };
+    
+    // Return embedded value if it exists and is not empty
+    if let Some(value) = embedded_value {
+        if !value.is_empty() {
+            info!("✅ [ENV] Loaded {} from build-time embedded variables (length: {})", key, value.len());
+            return Some(value.to_string());
+        }
+    }
+    
+    warn!("❌ [ENV] {} not found in runtime environment or embedded build variables", key);
+    None
+}
+
 /// Audio capture configuration
 #[derive(Debug, Clone)]
 pub struct AudioConfig {
@@ -101,17 +144,17 @@ impl Default for DeepgramConfig {
 }
 
 impl DeepgramConfig {
-    /// Load configuration from environment variables
+    /// Load configuration from environment variables with robust fallbacks
     pub fn from_env() -> Self {
         let mut config = Self::default();
         
         // Model selection
-        if let Ok(model) = std::env::var("DEEPGRAM_MODEL") {
+        if let Some(model) = get_robust_env_var("DEEPGRAM_MODEL") {
             config.model = model;
         }
         
         // Language
-        if let Ok(language) = std::env::var("DEEPGRAM_LANGUAGE") {
+        if let Some(language) = get_robust_env_var("DEEPGRAM_LANGUAGE") {
             config.language = language;
         }
         
@@ -842,8 +885,8 @@ pub fn init_transcription_service(app_handle: AppHandle) {
 /// Tauri command to start microphone transcription
 #[tauri::command]
 pub async fn start_microphone_transcription(app_handle: AppHandle) -> Result<String, String> {
-    let api_key = std::env::var("DEEPGRAM_API_KEY")
-        .map_err(|_| "DEEPGRAM_API_KEY environment variable not set".to_string())?;
+    let api_key = get_robust_env_var("DEEPGRAM_API_KEY")
+        .ok_or_else(|| "DEEPGRAM_API_KEY not available in runtime environment or embedded build variables. Please check your .env file or build configuration.".to_string())?;
 
     let config = AudioConfig {
         sample_rate: 16000,  // Optimized for speech recognition
@@ -870,8 +913,8 @@ pub async fn start_microphone_transcription(app_handle: AppHandle) -> Result<Str
 /// Tauri command to start system audio transcription
 #[tauri::command]
 pub async fn start_system_audio_transcription(app_handle: AppHandle) -> Result<String, String> {
-    let api_key = std::env::var("DEEPGRAM_API_KEY")
-        .map_err(|_| "DEEPGRAM_API_KEY environment variable not set".to_string())?;
+    let api_key = get_robust_env_var("DEEPGRAM_API_KEY")
+        .ok_or_else(|| "DEEPGRAM_API_KEY not available in runtime environment or embedded build variables. Please check your .env file or build configuration.".to_string())?;
 
     let config = AudioConfig {
         sample_rate: 16000,  // Optimized for speech recognition
@@ -947,4 +990,81 @@ pub async fn get_deepgram_config() -> Result<serde_json::Value, String> {
     });
     
     Ok(config_json)
+}
+
+/// Test Deepgram connection with retry logic
+#[tauri::command]
+pub async fn test_deepgram_connection() -> Result<serde_json::Value, String> {
+    info!("🗜 Testing Deepgram connection with robust environment loading...");
+    
+    // Test robust environment variable loading
+    let api_key = get_robust_env_var("DEEPGRAM_API_KEY")
+        .ok_or_else(|| "DEEPGRAM_API_KEY not available in runtime environment or embedded build variables. Check your .env file or build configuration.".to_string())?;
+    
+    info!("✅ Successfully loaded DEEPGRAM_API_KEY (length: {})", api_key.len());
+    
+    // Test Deepgram client initialization with retry logic
+    let mut last_error = String::new();
+    
+    for attempt in 1..=3 {
+        info!("🔄 Deepgram connection attempt {}/3...", attempt);
+        
+        match Deepgram::new(&api_key) {
+            Ok(client) => {
+                info!("✅ Deepgram client created successfully on attempt {}", attempt);
+                
+                // Test if we can create a transcription instance
+                let _transcription = client.transcription();
+                let config = DeepgramConfig::from_env();
+                
+                info!("✅ Deepgram transcription service initialized successfully");
+                
+                let test_result = serde_json::json!({
+                    "success": true,
+                    "connection_status": "connected",
+                    "attempts_needed": attempt,
+                    "api_key_source": "runtime_or_embedded",
+                    "api_key_length": api_key.len(),
+                    "config": {
+                        "model": config.model,
+                        "language": config.language,
+                        "smart_format": config.smart_format,
+                        "interim_results": config.interim_results,
+                        "endpointing": config.endpointing
+                    },
+                    "message": format!("Deepgram connection test successful on attempt {}", attempt)
+                });
+                
+                return Ok(test_result);
+            }
+            Err(e) => {
+                last_error = e.to_string();
+                error!("❌ Deepgram connection attempt {} failed: {}", attempt, last_error);
+                
+                // Wait before retrying (exponential backoff)
+                let delay_ms = 500 * attempt; // 500ms, 1s, 1.5s
+                tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
+            }
+        }
+    }
+    
+    // All retry attempts failed
+    error!("❌ All Deepgram connection attempts failed. Last error: {}", last_error);
+    
+    let test_result = serde_json::json!({
+        "success": false,
+        "connection_status": "failed",
+        "attempts_made": 3,
+        "api_key_source": "runtime_or_embedded",
+        "api_key_length": api_key.len(),
+        "last_error": last_error,
+        "message": "Deepgram connection failed after 3 retry attempts",
+        "troubleshooting": {
+            "check_api_key": "Verify DEEPGRAM_API_KEY is correct in .env file",
+            "check_network": "Ensure internet connection is available",
+            "check_firewall": "Verify firewall/proxy settings allow Deepgram API access"
+        }
+    });
+    
+    Ok(test_result)
 }

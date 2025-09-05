@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.mockmate.app",
   "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
   },
   "app": {
@@ -13,12 +16,10 @@
         "label": "main",
         "title": "MockMate",
         "width": 800,
-        "height": 160,
-        "minWidth": 800,
-        "minHeight": 160,
-        "maxWidth": 800,
-        "maxHeight": 160,
-        "resizable": false,
+        "height": 110,
+        "minWidth": 400,
+        "minHeight": 30,
+        "resizable": true,
         "fullscreen": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
@@ -26,9 +27,7 @@
         "decorations": false,
         "transparent": true,
         "shadow": false,
-        "center": false,
-        "x": 560,
-        "y": 0
+        "center": true
       }
     ],
     "security": {
@@ -71,9 +70,10 @@
     ],
     "windows": {
       "allowDowngrades": false,
-      "certificateThumbprint": null,
+      "certificateThumbprint": "5436D3EC98DBD6D237F46484FABBF52414054C15",
       "digestAlgorithm": "sha256",
       "timestampUrl": "http://timestamp.sectigo.com",
+      "signCommand": "C:\\Program Files (x86)\\Windows Kits\\10\\App Certification Kit\\signtool.exe",
       "wix": {
         "language": "en-US"
       },

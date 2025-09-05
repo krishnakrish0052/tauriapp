@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced AI Response</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .window-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .header {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 16px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: between;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(10px);
+        }
+
+        .header-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: white;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .header-icon {
+            font-size: 24px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .status-indicator {
+            margin-left: auto;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+            background: rgba(0, 255, 0, 0.2);
+            color: #90EE90;
+            border: 1px solid rgba(0, 255, 0, 0.3);
+        }
+
+        .status-indicator.streaming {
+            background: rgba(255, 165, 0, 0.2);
+            color: #FFA500;
+            border-color: rgba(255, 165, 0, 0.3);
+        }
+
+        .status-indicator.error {
+            background: rgba(255, 0, 0, 0.2);
+            color: #FF6B6B;
+            border-color: rgba(255, 0, 0, 0.3);
+        }
+
+        .content {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255, 255, 255, 0.3) transparent;
+        }
+
+        .content::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .content::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .content::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 4px;
+        }
+
+        .content::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.5);
+        }
+
+        .response-text {
+            line-height: 1.6;
+            font-size: 16px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            color: rgba(255, 255, 255, 0.95);
+        }
+
+        .loading-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: rgba(255, 255, 255, 0.8);
+            font-style: italic;
+        }
+
+        .loading-dots {
+            display: inline-flex;
+            gap: 4px;
+        }
+
+        .loading-dot {
+            width: 8px;
+            height: 8px;
+            background: white;
+            border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out;
+        }
+
+        .loading-dot:nth-child(1) { animation-delay: -0.32s; }
+        .loading-dot:nth-child(2) { animation-delay: -0.16s; }
+        .loading-dot:nth-child(3) { animation-delay: 0s; }
+
+        @keyframes bounce {
+            0%, 80%, 100% {
+                transform: scale(0);
+                opacity: 0.5;
+            }
+            40% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        .error-message {
+            color: #FF6B6B;
+            background: rgba(255, 107, 107, 0.1);
+            padding: 16px;
+            border-radius: 8px;
+            border-left: 4px solid #FF6B6B;
+            margin: 10px 0;
+        }
+
+        .stream-cursor {
+            display: inline-block;
+            width: 2px;
+            height: 20px;
+            background: white;
+            animation: blink 1s infinite;
+            margin-left: 2px;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+
+        .footer {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 12px 20px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.7);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .footer-info {
+            display: flex;
+            gap: 16px;
+        }
+
+        .footer-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        /* Enhanced visual effects */
+        .window-container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, rgba(255, 255, 255, 0.1), transparent);
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        /* Animated background particles */
+        .particles {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: -2;
+        }
+
+        .particle {
+            position: absolute;
+            width: 4px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            animation: float 6s infinite linear;
+        }
+
+        @keyframes float {
+            0% {
+                transform: translateY(100vh) rotate(0deg);
+                opacity: 0;
+            }
+            10% {
+                opacity: 1;
+            }
+            90% {
+                opacity: 1;
+            }
+            100% {
+                transform: translateY(-20px) rotate(360deg);
+                opacity: 0;
+            }
+        }
+
+        /* Typography enhancements */
+        .response-text h1, .response-text h2, .response-text h3 {
+            margin: 16px 0 8px 0;
+            font-weight: 600;
+        }
+
+        .response-text p {
+            margin: 8px 0;
+        }
+
+        .response-text code {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+
+        .response-text pre {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 12px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 8px 0;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+
+        /* Enhanced scrollbar for Windows */
+        .content {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255, 255, 255, 0.4) rgba(255, 255, 255, 0.1);
+        }
+
+        .content::-webkit-scrollbar {
+            width: 10px;
+        }
+
+        .content::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 5px;
+        }
+
+        .content::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.4);
+            border-radius: 5px;
+            border: 2px solid transparent;
+            background-clip: content-box;
+        }
+
+        .content::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.6);
+            background-clip: content-box;
+        }
+    </style>
+</head>
+<body>
+    <div class="particles" id="particles"></div>
+    
+    <div class="window-container">
+        <div class="header">
+            <div class="header-title">
+                <span class="header-icon">🤖</span>
+                Enhanced AI Response
+            </div>
+            <div class="status-indicator" id="statusIndicator">Ready</div>
+        </div>
+        
+        <div class="content" id="contentArea">
+            <div class="response-text" id="responseText">
+                <div class="loading-indicator" id="loadingIndicator" style="display: none;">
+                    <span>AI is thinking</span>
+                    <div class="loading-dots">
+                        <div class="loading-dot"></div>
+                        <div class="loading-dot"></div>
+                        <div class="loading-dot"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <div class="footer-info">
+                <div class="footer-item">
+                    <span>🔗</span>
+                    <span id="windowStatus">Enhanced Window Active</span>
+                </div>
+                <div class="footer-item">
+                    <span>⚡</span>
+                    <span id="streamStatus">Ready for AI</span>
+                </div>
+            </div>
+            <div class="footer-item">
+                <span>📏</span>
+                <span id="windowSize">500px height</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        console.log('🚀 Enhanced AI Response Window loaded');
+
+        // Enhanced state management
+        let currentContent = '';
+        let isStreaming = false;
+        let streamBuffer = '';
+        let lastUpdateTime = Date.now();
+
+        // DOM elements
+        const responseText = document.getElementById('responseText');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const streamStatus = document.getElementById('streamStatus');
+        const windowSize = document.getElementById('windowSize');
+
+        // Enhanced particle system
+        function createParticles() {
+            const particlesContainer = document.getElementById('particles');
+            for (let i = 0; i < 20; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'particle';
+                particle.style.left = Math.random() * 100 + '%';
+                particle.style.animationDelay = Math.random() * 6 + 's';
+                particle.style.animationDuration = (6 + Math.random() * 4) + 's';
+                particlesContainer.appendChild(particle);
+            }
+        }
+
+        // Enhanced content update function
+        window.updateContentEnhanced = function(messageType, data) {
+            console.log('🎯 Enhanced updateContent called:', messageType, data);
+            lastUpdateTime = Date.now();
+
+            switch (messageType) {
+                case 'stream':
+                    handleStreamMessage(data);
+                    break;
+                case 'stream-token':
+                    handleStreamToken(data);
+                    break;
+                case 'complete':
+                    handleComplete(data);
+                    break;
+                case 'error':
+                    handleError(data);
+                    break;
+                case 'clear':
+                    handleClear();
+                    break;
+                default:
+                    console.warn('Unknown message type:', messageType);
+            }
+
+            // Auto-resize based on content
+            requestIdleCallback(() => {
+                autoResizeWindow();
+            });
+        };
+
+        function handleStreamMessage(data) {
+            console.log('📝 Enhanced stream message:', data);
+            
+            if (data && data.text) {
+                setStatus('streaming');
+                showLoading(false);
+                appendText(data.text);
+            }
+        }
+
+        function handleStreamToken(data) {
+            console.log('🔤 Enhanced stream token:', data);
+            
+            if (data && data.token) {
+                setStatus('streaming');
+                showLoading(false);
+                appendText(data.token);
+                updateStreamStatus(`Streaming... (${streamBuffer.length} chars)`);
+            }
+        }
+
+        function handleComplete(data) {
+            console.log('✅ Enhanced complete:', data);
+            
+            setStatus('complete');
+            showLoading(false);
+            
+            if (data && data.text) {
+                // Replace content with complete response for better formatting
+                setContent(data.text);
+            }
+            
+            updateStreamStatus('Complete');
+            
+            // Final resize after completion
+            setTimeout(() => {
+                autoResizeWindow();
+            }, 100);
+        }
+
+        function handleError(data) {
+            console.error('❌ Enhanced error:', data);
+            
+            setStatus('error');
+            showLoading(false);
+            
+            const errorMessage = (data && data.error) ? data.error : 'Unknown error occurred';
+            displayError(errorMessage);
+            updateStreamStatus('Error');
+        }
+
+        function handleClear() {
+            console.log('🧹 Enhanced clear');
+            
+            currentContent = '';
+            streamBuffer = '';
+            responseText.innerHTML = '';
+            setStatus('ready');
+            showLoading(false);
+            updateStreamStatus('Cleared');
+        }
+
+        function appendText(text) {
+            if (!text) return;
+            
+            streamBuffer += text;
+            currentContent += text;
+            
+            // Enhanced text rendering with better formatting
+            const formattedText = formatText(currentContent);
+            responseText.innerHTML = formattedText + '<span class="stream-cursor"></span>';
+            
+            // Auto-scroll to bottom
+            const contentArea = document.getElementById('contentArea');
+            contentArea.scrollTop = contentArea.scrollHeight;
+        }
+
+        function setContent(text) {
+            currentContent = text || '';
+            streamBuffer = text || '';
+            
+            const formattedText = formatText(currentContent);
+            responseText.innerHTML = formattedText;
+            
+            // Auto-scroll to bottom
+            const contentArea = document.getElementById('contentArea');
+            contentArea.scrollTop = contentArea.scrollHeight;
+        }
+
+        function formatText(text) {
+            if (!text) return '';
+            
+            // Enhanced text formatting
+            return text
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/`(.*?)`/g, '<code>$1</code>')
+                .replace(/\n/g, '<br>')
+                .replace(/\[([A-Z_]+)\]/g, '<strong style="color: #90EE90;">[$1]</strong>')
+                .replace(/🎯/g, '<span style="color: #FFD700;">🎯</span>')
+                .replace(/✅/g, '<span style="color: #90EE90;">✅</span>')
+                .replace(/❌/g, '<span style="color: #FF6B6B;">❌</span>')
+                .replace(/⚠️/g, '<span style="color: #FFA500;">⚠️</span>');
+        }
+
+        function showLoading(show) {
+            loadingIndicator.style.display = show ? 'flex' : 'none';
+        }
+
+        function setStatus(status) {
+            const indicator = statusIndicator;
+            indicator.className = 'status-indicator';
+            
+            switch (status) {
+                case 'ready':
+                    indicator.textContent = 'Ready';
+                    indicator.classList.add('ready');
+                    break;
+                case 'streaming':
+                    indicator.textContent = 'Streaming';
+                    indicator.classList.add('streaming');
+                    break;
+                case 'complete':
+                    indicator.textContent = 'Complete';
+                    break;
+                case 'error':
+                    indicator.textContent = 'Error';
+                    indicator.classList.add('error');
+                    break;
+            }
+        }
+
+        function updateStreamStatus(status) {
+            streamStatus.textContent = status;
+        }
+
+        function displayError(errorMessage) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.textContent = `Error: ${errorMessage}`;
+            responseText.appendChild(errorDiv);
+        }
+
+        // Enhanced auto-resize function
+        function autoResizeWindow() {
+            const contentHeight = responseText.scrollHeight;
+            const headerHeight = 60; // Header height
+            const footerHeight = 40; // Footer height
+            const padding = 40; // Content padding
+            
+            const totalHeight = contentHeight + headerHeight + footerHeight + padding;
+            const clampedHeight = Math.max(200, Math.min(totalHeight, 500)); // Min 200px, max 500px
+            
+            console.log(`📏 Enhanced auto-resize: content=${contentHeight}px, total=${totalHeight}px, clamped=${clampedHeight}px`);
+            
+            // Update footer size indicator
+            windowSize.textContent = `${clampedHeight}px height`;
+            
+            // Call Rust backend to resize
+            if (window.__TAURI__) {
+                window.__TAURI__.core.invoke('resize_ai_response_window_enhanced', {
+                    height: clampedHeight
+                }).catch(err => {
+                    console.error('❌ Enhanced resize failed:', err);
+                });
+            }
+        }
+
+        // Enhanced initialization
+        function initializeEnhanced() {
+            console.log('🚀 Initializing enhanced AI response window');
+            
+            createParticles();
+            setStatus('ready');
+            updateStreamStatus('Ready');
+            
+            // Set initial window size
+            autoResizeWindow();
+            
+            // Listen for window resize events
+            window.addEventListener('resize', () => {
+                console.log('🔄 Enhanced window resized');
+                setTimeout(autoResizeWindow, 100);
+            });
+            
+            console.log('✅ Enhanced AI response window initialized');
+        }
+
+        // Global functions for Rust backend communication
+        window.updateContent = window.updateContentEnhanced;
+        window.clearContent = () => handleClear();
+        window.showLoading = showLoading;
+        window.setStatus = setStatus;
+
+        // Initialize when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initializeEnhanced);
+        } else {
+            initializeEnhanced();
+        }
+
+        // Enhanced error handling
+        window.addEventListener('error', (event) => {
+            console.error('❌ Enhanced window error:', event.error);
+            displayError(`JavaScript Error: ${event.error.message}`);
+        });
+
+        // Performance monitoring
+        setInterval(() => {
+            const timeSinceUpdate = Date.now() - lastUpdateTime;
+            if (timeSinceUpdate > 30000) { // 30 seconds
+                console.log('💤 Enhanced window idle for', timeSinceUpdate, 'ms');
+            }
+        }, 10000);
+
+        console.log('🎉 Enhanced AI Response Window script loaded successfully');
+    </script>
+</body>
+</html>

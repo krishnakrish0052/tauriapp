@@ -1,7 +1,7 @@
 use reqwest::Client;
 use serde::Deserialize;
 use anyhow::Result;
-use log::{info, error};
+use log::{info, error, warn, debug};
 use futures_util::stream::StreamExt;
 use serde_json::Value;
 
@@ -77,7 +77,7 @@ impl PollinationsClient {
 
 Interview Question: {}
 
-Please provide a comprehensive and professional answer to this interview question.", system_prompt, question);
+Provide a confident, direct, and authentic answer that demonstrates your qualifications. Keep it focused and conversational - aim for 30-60 seconds when spoken aloud. Be specific and impactful.", system_prompt, question);
 
         info!("Generating answer with Pollinations model: {}", model.as_str());
         
@@ -589,8 +589,8 @@ Provide only the JSON response, no other text.",
     fn build_system_prompt(&self, context: &super::openai::InterviewContext) -> String {
         let mut prompt = String::new();
         
-        // Core role and personality
-        prompt.push_str("You are an expert interview coach and career advisor. Your role is to help the candidate succeed by providing thoughtful, authentic, and compelling answers that showcase their qualifications naturally.");
+        // Core role and personality - ULTRA FOCUSED for interview speed
+        prompt.push_str("You are an expert interview answer generator. Provide DIRECT, CONCISE answers that immediately address the question. NO fluff, NO introductory phrases, NO excessive context. Get straight to the point.");
         
         // Personalized greeting if user name is available
         if let Some(user_name) = &context.user_name {
@@ -685,34 +685,26 @@ Provide only the JSON response, no other text.",
             }
         }
         
-        // Response style guidelines
-        prompt.push_str("\n\n=== RESPONSE GUIDELINES ===");
-        prompt.push_str("\n\n🎯 AUTHENTICITY & TONE:");
-        prompt.push_str("\n• Write as if you're the candidate speaking naturally and confidently");
-        prompt.push_str("\n• Use first person (\"I\", \"my\", \"we\") to make responses personal and engaging");
-        prompt.push_str("\n• Match the energy and professionalism appropriate for the role and company");
-        prompt.push_str("\n• Avoid robotic or templated language - sound human and genuine");
+        // ULTRA-FOCUSED Response Guidelines for Interview Speed
+        prompt.push_str("\n\n=== INTERVIEW SPEED GUIDELINES (CRITICAL) ===");
+        prompt.push_str("\n\n⚡ SPEED & DIRECTNESS:");
+        prompt.push_str("\n• Answer the exact question asked - NO tangents or background information");
+        prompt.push_str("\n• Start with the answer immediately - NO \"Well,\" \"So,\" or \"That's a great question\"");
+        prompt.push_str("\n• Maximum 2-3 sentences for most answers");
+        prompt.push_str("\n• Use first person (\"I\") and be specific");
         
-        prompt.push_str("\n\n📝 STRUCTURE & CONTENT:");
-        prompt.push_str("\n• Lead with confidence: start with a clear, direct response to the question");
-        prompt.push_str("\n• Support with specifics: provide concrete examples, metrics, or scenarios");
-        prompt.push_str("\n• Connect to value: explicitly link your response to how you'd contribute to their team");
-        prompt.push_str("\n• Keep it conversational: aim for 30-90 seconds when spoken aloud");
+        prompt.push_str("\n\n🎯 CONTENT FOCUS:");
+        prompt.push_str("\n• ONE clear example or point per answer");
+        prompt.push_str("\n• Include numbers/metrics when relevant");
+        prompt.push_str("\n• NO generic advice or explanations");
+        prompt.push_str("\n• NO \"this depends\" or \"it varies\" responses");
         
-        prompt.push_str("\n\n🚀 STRATEGIC APPROACH:");
-        prompt.push_str("\n• Turn every question into an opportunity to demonstrate value and fit");
-        prompt.push_str("\n• Show don't just tell: use specific stories and examples to illustrate points");
-        prompt.push_str("\n• Address potential concerns proactively while staying positive");
-        prompt.push_str("\n• End responses with forward momentum or a thoughtful question when appropriate");
+        prompt.push_str("\n\n🚀 INTERVIEW FORMAT:");
+        prompt.push_str("\n• Technical: Give the solution/approach directly");
+        prompt.push_str("\n• Behavioral: Quick STAR - Situation + Result (skip lengthy Task/Action)");
+        prompt.push_str("\n• Experience: State what you've done, not what you could do");
         
-        // Interview type specific guidance
-        prompt.push_str("\n\n💡 QUESTION TYPE ADAPTATIONS:");
-        prompt.push_str("\n• Behavioral: Use STAR method but make it conversational, not mechanical");
-        prompt.push_str("\n• Technical: Explain your thinking process, consider alternatives, show expertise depth");
-        prompt.push_str("\n• Hypothetical: Think out loud, ask clarifying questions, show problem-solving approach");
-        prompt.push_str("\n• Culture/Fit: Be authentic about values while showing genuine enthusiasm for their mission");
-        
-        prompt.push_str("\n\nRemember: Your goal is to help the candidate sound competent, confident, and genuinely excited about the opportunity while being completely authentic to who they are as a professional.");
+        prompt.push_str("\n\nCRITICAL: This is for LIVE INTERVIEW assistance. Responses must be fast, direct, and immediately usable. NO verbose explanations or context.");
         
         prompt
     }
@@ -832,7 +824,7 @@ Please provide a comprehensive and professional answer to this interview questio
         }
     }
 
-    // Helper method to parse SSE lines
+    // Helper method to parse SSE lines - optimized for better streaming performance
     fn parse_sse_line(&self, line: &str) -> Option<String> {
         let line = line.trim();
         
@@ -859,33 +851,10 @@ Please provide a comprehensive and professional answer to this interview questio
             if data_content.trim().starts_with("{") {
                 match serde_json::from_str::<Value>(data_content) {
                     Ok(json) => {
-                        // 🔍 LOG COMPLETE API RESPONSE METADATA
-                        info!("🔍 COMPLETE API RESPONSE JSON: {}", serde_json::to_string_pretty(&json).unwrap_or_default());
+                        // Reduce excessive logging for better performance
+                        debug!("JSON response parsed successfully");
                         
-                        // Log specific metadata fields if they exist
-                        if let Some(id) = json.get("id") {
-                            info!("📋 Response ID: {}", id);
-                        }
-                        if let Some(object) = json.get("object") {
-                            info!("📋 Response Object Type: {}", object);
-                        }
-                        if let Some(created) = json.get("created") {
-                            info!("⏰ Response Created Timestamp: {}", created);
-                        }
-                        if let Some(model) = json.get("model") {
-                            info!("🤖 Response Model: {}", model);
-                        }
-                        if let Some(usage) = json.get("usage") {
-                            info!("📊 Token Usage: {}", serde_json::to_string_pretty(&usage).unwrap_or_default());
-                        }
-                        if let Some(system_fingerprint) = json.get("system_fingerprint") {
-                            info!("🔐 System Fingerprint: {}", system_fingerprint);
-                        }
-                        if let Some(finish_reason) = json.get("finish_reason") {
-                            info!("🏁 Finish Reason: {}", finish_reason);
-                        }
-                        
-                        // Look for content in OpenAI-compatible structure
+                        // Look for content in OpenAI-compatible structure first (most common)
                         if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
                             if let Some(first_choice) = choices.first() {
                                 if let Some(delta) = first_choice.get("delta") {
@@ -900,14 +869,14 @@ Please provide a comprehensive and professional answer to this interview questio
                             }
                         }
                         
+                        // Look for direct content field
+                        if let Some(content) = json.get("content").and_then(|c| c.as_str()) {
+                            return Some(content.to_string());
+                        }
+                        
                         // Look for direct text field
                         if let Some(text) = json.get("text").and_then(|t| t.as_str()) {
                             return Some(text.to_string());
-                        }
-                        
-                        // Look for content field directly
-                        if let Some(content) = json.get("content").and_then(|c| c.as_str()) {
-                            return Some(content.to_string());
                         }
                         
                         // Look for message content
@@ -917,10 +886,9 @@ Please provide a comprehensive and professional answer to this interview questio
                             }
                         }
                     }
-                    Err(parse_err) => {
-                        // Log JSON parsing error but continue
-                        info!("JSON parse error (treating as raw text): {}", parse_err);
-                        // If not valid JSON, treat as raw text
+                    Err(_) => {
+                        // If not valid JSON, treat as raw text - reduced logging
+                        debug!("Non-JSON data, treating as raw text");
                         return Some(data_content.to_string());
                     }
                 }

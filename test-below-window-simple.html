@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Below-Main Enhanced Window</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        button {
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid white;
+            color: white;
+            padding: 15px 30px;
+            font-size: 18px;
+            border-radius: 10px;
+            cursor: pointer;
+            margin: 10px;
+            transition: all 0.3s;
+        }
+        button:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: scale(1.05);
+        }
+        button:active {
+            transform: scale(0.95);
+        }
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            min-width: 400px;
+            text-align: center;
+        }
+        .success {
+            color: #4ade80;
+        }
+        .error {
+            color: #f87171;
+        }
+        h1 {
+            margin-bottom: 30px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Test Below-Main Enhanced Window (Simple)</h1>
+    
+    <div>
+        <button onclick="createWindow()">Create Below-Main Enhanced Window</button>
+        <button onclick="showWindow()">Show Window</button>
+        <button onclick="hideWindow()">Hide Window</button>
+        <button onclick="closeWindow()">Close Window</button>
+        <button onclick="sendTestData()">Send Test Data</button>
+        <button onclick="resizeWindow(300)">Resize to 300px</button>
+        <button onclick="resizeWindow(500)">Resize to 500px</button>
+    </div>
+    
+    <div id="status" class="status">
+        Waiting for Tauri API to load...
+    </div>
+
+    <script>
+        // Wait for Tauri to be available
+        let invoke = null;
+        
+        function checkTauriAPI() {
+            if (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke) {
+                invoke = window.__TAURI__.core.invoke;
+                updateStatus('Tauri API loaded! Ready to test the below-main enhanced window.');
+                console.log('Tauri API is ready!');
+                return true;
+            } else if (window.__TAURI__ && window.__TAURI__.invoke) {
+                invoke = window.__TAURI__.invoke;
+                updateStatus('Tauri API loaded (legacy)! Ready to test the below-main enhanced window.');
+                console.log('Tauri API is ready (legacy)!');
+                return true;
+            }
+            return false;
+        }
+        
+        // Check on page load and periodically
+        window.addEventListener('DOMContentLoaded', () => {
+            if (!checkTauriAPI()) {
+                // Try checking periodically
+                const checkInterval = setInterval(() => {
+                    if (checkTauriAPI()) {
+                        clearInterval(checkInterval);
+                    }
+                }, 100);
+                
+                // Stop checking after 5 seconds
+                setTimeout(() => {
+                    clearInterval(checkInterval);
+                    if (!invoke) {
+                        updateStatus('Failed to load Tauri API. Make sure this is running in a Tauri window.', true);
+                    }
+                }, 5000);
+            }
+        });
+        
+        function updateStatus(message, isError = false) {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = 'status ' + (isError ? 'error' : 'success');
+        }
+        
+        async function createWindow() {
+            if (!invoke) {
+                updateStatus('Tauri API not available yet. Please wait...', true);
+                return;
+            }
+            try {
+                updateStatus('Creating below-main enhanced window...');
+                const result = await invoke('create_ai_response_window_enhanced_below');
+                updateStatus('Window created successfully: ' + result);
+            } catch (error) {
+                updateStatus('Error creating window: ' + error, true);
+                console.error('Create window error:', error);
+            }
+        }
+        
+        async function showWindow() {
+            if (!invoke) {
+                updateStatus('Tauri API not available yet. Please wait...', true);
+                return;
+            }
+            try {
+                updateStatus('Showing below-main enhanced window...');
+                const result = await invoke('show_ai_response_window_enhanced_below');
+                updateStatus('Window shown: ' + result);
+            } catch (error) {
+                updateStatus('Error showing window: ' + error, true);
+                console.error('Show window error:', error);
+            }
+        }
+        
+        async function hideWindow() {
+            if (!invoke) {
+                updateStatus('Tauri API not available yet. Please wait...', true);
+                return;
+            }
+            try {
+                updateStatus('Hiding below-main enhanced window...');
+                const result = await invoke('hide_ai_response_window_enhanced_below');
+                updateStatus('Window hidden: ' + result);
+            } catch (error) {
+                updateStatus('Error hiding window: ' + error, true);
+                console.error('Hide window error:', error);
+            }
+        }
+        
+        async function closeWindow() {
+            if (!invoke) {
+                updateStatus('Tauri API not available yet. Please wait...', true);
+                return;
+            }
+            try {
+                updateStatus('Closing below-main enhanced window...');
+                const result = await invoke('close_ai_response_window_enhanced_below');
+                updateStatus('Window closed: ' + result);
+            } catch (error) {
+                updateStatus('Error closing window: ' + error, true);
+                console.error('Close window error:', error);
+            }
+        }
+        
+        async function sendTestData() {
+            if (!invoke) {
+                updateStatus('Tauri API not available yet. Please wait...', true);
+                return;
+            }
+            try {
+                updateStatus('Sending test data to window...');
+                const testData = {
+                    message_type: 'stream-token',
+                    text: 'This is a test message sent to the below-main enhanced window! ' + new Date().toLocaleTimeString(),
+                    error: null
+                };
+                const result = await invoke('send_ai_response_data_enhanced_below', { data: testData });
+                updateStatus('Data sent: ' + result);
+            } catch (error) {
+                updateStatus('Error sending data: ' + error, true);
+                console.error('Send data error:', error);
+            }
+        }
+        
+        async function resizeWindow(height) {
+            if (!invoke) {
+                updateStatus('Tauri API not available yet. Please wait...', true);
+                return;
+            }
+            try {
+                updateStatus('Resizing window to ' + height + 'px...');
+                const result = await invoke('resize_ai_response_window_enhanced_below', { height: height });
+                updateStatus('Window resized: ' + result);
+            } catch (error) {
+                updateStatus('Error resizing window: ' + error, true);
+                console.error('Resize window error:', error);
+            }
+        }
+        
+        // Debug helper
+        console.log('Page loaded. Checking for Tauri API...');
+        console.log('window.__TAURI__:', window.__TAURI__);
+    </script>
+</body>
+</html>

@@ -15,6 +15,8 @@ mod pollinations;
 mod wasapi_loopback;
 pub mod realtime_transcription;
 pub mod accessibility_reader; // Windows Accessibility API text reader
+pub mod window_manager; // DPI-aware window management
+pub mod permissions; // Permission management for audio access
 
 // New Phase 2 modules
 pub mod database;
@@ -55,12 +57,14 @@ pub fn run() -> Result<()> {
             show_ai_response_window,
             hide_ai_response_window,
             send_ai_response_data,
+            reset_ai_response_window_size,
             // Real-time transcription commands
             realtime_transcription::start_microphone_transcription,
             realtime_transcription::start_system_audio_transcription,
             realtime_transcription::stop_transcription,
             realtime_transcription::get_transcription_status,
             realtime_transcription::get_deepgram_config,
+            realtime_transcription::test_deepgram_connection,
             generate_ai_answer,
             analyze_screen_content,
             update_interview_context,
@@ -125,9 +129,19 @@ pub fn run() -> Result<()> {
             resize_window_scale,
             show_main_window,
             hide_main_window,
+            // DPI-aware window management
+            setup_dpi_aware_positioning,
+            get_window_info,
+            get_monitors_info,
+            lock_window_size,
+            ensure_window_visible,
             // Database diagnostics
             diagnose_database,
-            test_session_query
+            test_session_query,
+            // Permission management
+            permissions::check_permissions,
+            permissions::request_permissions,
+            permissions::initialize_first_run
         ])
         .manage(AppState::new())
         .setup(|app| {
@@ -177,7 +191,7 @@ pub fn run() -> Result<()> {
                     
                     // Handle the protocol launch with a slight delay to ensure app is fully initialized
                     let app_handle = app.handle().clone();
-                    tokio::spawn(async move {
+                    tauri::async_runtime::spawn(async move {
                         tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
                         if let Err(e) = handle_protocol_launch_with_temp_token(session_id, token, temp_token, user_id, auto_connect, auto_fill, app_handle).await {
                             error!("Failed to handle protocol launch: {}", e);
@@ -194,16 +208,30 @@ pub fn run() -> Result<()> {
             accessibility_reader::init_realtime_monitoring(app.handle().clone());
             info!("✅ Real-time accessibility monitoring service initialized");
             
-            // Get the main window and set capture protection
+            // Get the main window and set capture protection + DPI-aware positioning
             match app.get_webview_window("main") {
                 Some(main_window) => {
                     info!("Main window found. Attempting to set capture protection.");
-                    if let Err(e) = set_window_capture_protection(main_window, true) {
+                    if let Err(e) = set_window_capture_protection(&main_window, true) {
                         error!("Failed to set window capture protection on startup: {}", e);
+                    }
+                    
+                    // Initialize DPI-aware positioning for the main window
+                    info!("🖥️ Initializing DPI-aware positioning for main window...");
+                    if let Err(e) = window_manager::setup_main_window_dpi_aware(app.handle()) {
+                        error!("Failed to setup DPI-aware positioning on startup: {}", e);
+                    } else {
+                        info!("✅ DPI-aware positioning initialized successfully");
+                    }
+                    
+                    // Log current window configuration for debugging
+                    if let Ok(config) = window_manager::get_window_configuration(&main_window) {
+                        info!("📊 Window configuration: {}x{} at ({}, {}) on monitor '{}'", 
+                              config.width, config.height, config.x, config.y, config.monitor_name);
                     }
                 },
                 None => {
-                    error!("Main window not found on startup. Capture protection not applied.");
+                    error!("Main window not found on startup. Capture protection and DPI setup not applied.");
                 }
             }
             
@@ -216,6 +244,16 @@ pub fn run() -> Result<()> {
             
             // List available audio devices on startup
             audio::list_all_devices();
+            
+            // Initialize permissions on first run - defer to avoid runtime context issues
+            let app_handle_perms = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = permissions::PermissionManager::initialize_permissions_on_first_run() {
+                    error!("Failed to initialize first-run permissions: {}", e);
+                } else {
+                    info!("✅ First-run permission initialization completed");
+                }
+            });
             
             // Initialize environment variables if needed
             match get_env_var("DEEPGRAM_API_KEY") {
@@ -538,15 +576,31 @@ async fn pollinations_generate_answer_streaming(
     let model = pollinations::PollinationsModel::from_string(&payload.model)
         .map_err(|e| format!("Invalid Pollinations model: {}", e))?;
 
-    // Show the AI response window before starting streaming
-    if let Err(e) = show_ai_response_window(app_handle.clone()) {
-        warn!("Failed to show AI response window: {}", e);
-    }
+    // Immediately show the AI response window for faster response (no await)
+    let app_handle_show = app_handle.clone();
+    tokio::spawn(async move {
+        if let Err(e) = show_ai_response_window_async(app_handle_show).await {
+            warn!("Failed to show AI response window: {}", e);
+        }
+    });
 
     // Initialize streaming state and timing
     let stream_start_time = std::time::Instant::now();
-    info!("🚀 Starting progressive streaming for AI response window");
+    info!("⚡ SPEED OPTIMIZED: Starting progressive streaming for AI response window");
     let _ = app_handle.emit("ai-stream-start", ());
+    
+    // Send immediate status to show window is ready
+    let ready_data = AiResponseData {
+        message_type: "stream-token".to_string(),
+        text: Some("[READY] AI response window ready, generating answer...".to_string()),
+        error: None,
+    };
+    let app_handle_ready = app_handle.clone();
+    tokio::spawn(async move {
+        if let Err(e) = send_ai_response_data(app_handle_ready, ready_data).await {
+            warn!("Failed to send ready signal: {}", e);
+        }
+    });
 
     // Stream the response with callback to update UI progressively
     let app_handle_clone = app_handle.clone();
@@ -657,15 +711,31 @@ async fn pollinations_generate_answer_post_streaming(
     let model = pollinations::PollinationsModel::from_string(&payload.model)
         .map_err(|e| format!("Invalid Pollinations model: {}", e))?;
 
-    // Show the AI response window before starting streaming
-    if let Err(e) = show_ai_response_window(app_handle.clone()) {
-        warn!("Failed to show AI response window: {}", e);
-    }
+    // Immediately show the AI response window for faster response (no await)
+    let app_handle_show = app_handle.clone();
+    tokio::spawn(async move {
+        if let Err(e) = show_ai_response_window_async(app_handle_show).await {
+            warn!("Failed to show AI response window: {}", e);
+        }
+    });
 
     // Initialize streaming state and timing
     let stream_start_time = std::time::Instant::now();
-    info!("🚀 Starting progressive streaming (POST) for AI response window");
+    info!("⚡ SPEED OPTIMIZED: Starting progressive streaming (POST) for AI response window");
     let _ = app_handle.emit("ai-stream-start", ());
+    
+    // Send immediate status to show window is ready
+    let ready_data = AiResponseData {
+        message_type: "stream-token".to_string(),
+        text: Some("[READY] AI response window ready, generating answer...".to_string()),
+        error: None,
+    };
+    let app_handle_ready = app_handle.clone();
+    tokio::spawn(async move {
+        if let Err(e) = send_ai_response_data(app_handle_ready, ready_data).await {
+            warn!("Failed to send ready signal: {}", e);
+        }
+    });
 
     // Stream the response with callback to update UI progressively
     let app_handle_clone = app_handle.clone();
@@ -964,7 +1034,6 @@ fn start_system_audio_capture() -> Result<String, String> {
     }
 }
 
-
 #[tauri::command]
 fn test_microphone_capture() -> Result<String, String> {
     info!("Testing microphone capture...");
@@ -1109,33 +1178,101 @@ fn create_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
         }
     };
     
-    // Get main window position and size
-    let main_position = main_window.outer_position().map_err(|e| e.to_string())?;
-    let main_size = main_window.outer_size().map_err(|e| e.to_string())?;
+    // Get DPI scale factor first for proper scaling
+    let monitor = main_window.current_monitor().map_err(|e| e.to_string())?
+        .ok_or_else(|| "No monitor found".to_string())?;
+    let scale_factor = monitor.scale_factor();
     
-    // Calculate position for response window (below main window)
-    let response_x = main_position.x;
-    let response_y = main_position.y + main_size.height as i32 + 5; // 5px gap
+    info!("🔍 DEBUG: DPI Scale factor: {}", scale_factor);
     
-    // Get screen dimensions to set proper max height
-    let screen_size = main_window.current_monitor().map_err(|e| e.to_string())?
-        .map(|monitor| {
-            let size = monitor.size();
-            (size.width, size.height)
-        })
-        .unwrap_or((1920, 1080)); // fallback to common resolution
+    // Get main window measurements - use INNER for consistent sizing
+    let main_inner_position = main_window.inner_position().map_err(|e| e.to_string())?;
+    let main_inner_size = main_window.inner_size().map_err(|e| e.to_string())?;
+    let main_outer_size = main_window.outer_size().map_err(|e| e.to_string())?;
     
-    let _max_window_height = (screen_size.1 as f64 * 0.6) as f64; // Use 60% of screen height
+    info!("🔍 DEBUG: Main window - inner: {}x{} at ({}, {}), outer: {}x{}", 
+          main_inner_size.width, main_inner_size.height, main_inner_position.x, main_inner_position.y,
+          main_outer_size.width, main_outer_size.height);
+    
+    // Calculate AI response window size - SAME WIDTH as main window's INNER content
+    let max_height = 500u32; // Maximum height constraint
+    
+    // Use main window INNER width for exact content width match
+    let ai_response_width = main_inner_size.width;
+    let ai_response_height = max_height.min(300); // Default height, max 500px
+    
+    info!("🔍 DEBUG: AI Response size calculated: {}x{} (SAME INNER WIDTH as main)", ai_response_width, ai_response_height);
+    
+    // Get screen size first for positioning calculations
+    let screen_size = monitor.size();
+    
+    // FIXED DPI-aware positioning: work in logical coordinates, then convert once at the end
+    // Convert screen size to logical coordinates
+    let logical_screen_width = (screen_size.width as f64) / scale_factor;
+    let logical_screen_height = (screen_size.height as f64) / scale_factor;
+    
+    // Window dimensions are already in physical pixels, convert to logical
+    let logical_window_width = ai_response_width as f64 / scale_factor;
+    let logical_window_height = ai_response_height as f64 / scale_factor;
+    
+    // Calculate center position in LOGICAL coordinates
+    let logical_x = (logical_screen_width - logical_window_width) / 2.0;
+    let logical_y = (logical_screen_height - logical_window_height) / 2.0;
+    
+    // Now convert logical position to physical for Tauri (only once!)
+    let physical_x = (logical_x * scale_factor) as i32;
+    let physical_y = (logical_y * scale_factor) as i32;
+    
+    // Window size stays as-is (already in physical pixels)
+    let physical_width = ai_response_width;
+    let physical_height = ai_response_height;
+    
+    // Use the physical coordinates for positioning
+    let response_x = physical_x;
+    let response_y = physical_y;
+    
+    info!("🔍 DEBUG: FIXED DPI-aware centering calculation:");
+    info!("  - Screen size (physical): {}x{}", screen_size.width, screen_size.height);
+    info!("  - DPI Scale factor: {:.2}", scale_factor);
+    info!("  - Screen size (logical): {:.0}x{:.0}", logical_screen_width, logical_screen_height);
+    info!("  - AI window logical size: {:.1}x{:.1}", logical_window_width, logical_window_height);
+    info!("  - Logical center position: ({:.1}, {:.1})", logical_x, logical_y);
+    info!("  - Physical window size: {}x{}", physical_width, physical_height);
+    info!("  - Physical center position: ({}, {})", response_x, response_y);
+    info!("  - FIXED: Single DPI conversion at the end");
+    
+    info!("📐 AI Response Window Position: main_inner={}x{} at ({}, {}), AI={}x{} at ({}, {}) [ALIGNED X & SAME WIDTH, BELOW MAIN]", 
+          main_inner_size.width, main_inner_size.height, main_inner_position.x, main_inner_position.y,
+          ai_response_width, ai_response_height, response_x, response_y);
+    
+    // Screen bounds check for safety (screen_size already obtained above)
+    info!("🔍 DEBUG: Screen size: {}x{} (scale: {})", screen_size.width, screen_size.height, scale_factor);
+    
+    // Ensure AI response window fits on screen (positioned below main window)
+    if response_x + ai_response_width as i32 > screen_size.width as i32 ||
+       response_y + ai_response_height as i32 > screen_size.height as i32 {
+        warn!("⚠️ AI response window would go off-screen when positioned below main window");
+    }
     
     // Create response window configuration
+    // Use a full URL to ensure it bypasses any React routing
+    let window_url = if cfg!(debug_assertions) {
+        // Development mode - serve from localhost with proper path
+        tauri::WebviewUrl::External("http://localhost:1420/ai-response.html".parse().unwrap())
+    } else {
+        // Production mode - use app protocol with proper path
+        tauri::WebviewUrl::App("ai-response.html".into())
+    };
+    
     let window_config = tauri::WebviewWindowBuilder::new(
         &app_handle,
         "ai-response",
-        tauri::WebviewUrl::App("ai-response.html".into())
+        window_url
     )
     .title("AI Response")
-    .inner_size(800.0, 150.0) // Start with minimal height for auto-sizing
-    .min_inner_size(800.0, 100.0)  // Lower minimum for auto-sizing
+    .inner_size(physical_width as f64, physical_height as f64)
+    .min_inner_size(200.0, 100.0)  // Conservative minimum size
+    .max_inner_size(physical_width as f64, 500.0 * scale_factor)  // Respect max height constraint with DPI scaling
     // Remove max size constraint to allow dynamic resizing
     .position(response_x as f64, response_y as f64)
     .resizable(true) // Make resizable for programmatic resizing
@@ -1153,7 +1290,7 @@ fn create_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
             info!("AI response window created successfully");
             
             // Set window capture protection for the response window too
-            if let Err(e) = set_window_capture_protection(window, true) {
+            if let Err(e) = set_window_capture_protection(&window, true) {
                 error!("Failed to set window capture protection on AI response window: {}", e);
             }
             
@@ -1213,8 +1350,16 @@ fn resize_ai_response_window(app_handle: AppHandle, height: u32) -> Result<Strin
         let calculated_max = (max_height.height as f64 * 0.6) as u32;
         info!("📐 Screen size: {}x{}, calculated max height: {}", max_height.width, max_height.height, calculated_max);
         
-        // Lower minimum height for auto-sizing content
-        let clamped_height = height.max(80).min(calculated_max);
+        // Get main window size to calculate centered AI response width
+        let main_window = app_handle.get_webview_window("main")
+            .ok_or_else(|| "Main window not found for width calculation".to_string())?;
+        let main_outer_size = main_window.outer_size().map_err(|e| e.to_string())?;
+        let ai_response_width = main_outer_size.width; // Use SAME WIDTH as main window outer size
+        
+        info!("🔍 DEBUG (resize): Main outer size: {}x{}, AI width: {} (SAME WIDTH)", main_outer_size.width, main_outer_size.height, ai_response_width);
+        
+        // Lower minimum height for auto-sizing content, max height 500px
+        let clamped_height = height.max(80).min(500); // Use 500px as max height for content-based sizing
         let size_diff = (current_size.height as i32 - clamped_height as i32).abs();
         
         info!("📊 RESIZE DEBUG: current={}px, requested={}px, clamped={}px, max={}px, diff={}px", 
@@ -1225,7 +1370,7 @@ fn resize_ai_response_window(app_handle: AppHandle, height: u32) -> Result<Strin
             info!("🎯 Attempting resize from {}px to {}px...", current_size.height, clamped_height);
             
             match window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
-                width: 800,
+                width: ai_response_width,  // Use fixed AI response window width
                 height: clamped_height,
             })) {
                 Ok(_) => {
@@ -1275,33 +1420,76 @@ fn create_ai_response_window_at_startup(app_handle: AppHandle) -> Result<String,
         }
     };
     
-    // Get main window position and size
-    let main_position = main_window.outer_position().map_err(|e| e.to_string())?;
-    let main_size = main_window.outer_size().map_err(|e| e.to_string())?;
+    // Get DPI scale factor first for proper scaling (startup)
+    let monitor = main_window.current_monitor().map_err(|e| e.to_string())?
+        .ok_or_else(|| "No monitor found".to_string())?;
+    let scale_factor = monitor.scale_factor();
     
-    // Calculate position for response window (below main window)
-    let response_x = main_position.x;
-    let response_y = main_position.y + main_size.height as i32 + 5; // 5px gap
+    info!("🔍 DEBUG (startup): DPI Scale factor: {}", scale_factor);
     
-    // Get screen dimensions to set proper max height
-    let screen_size = main_window.current_monitor().map_err(|e| e.to_string())?
-        .map(|monitor| {
-            let size = monitor.size();
-            (size.width, size.height)
-        })
-        .unwrap_or((1920, 1080)); // fallback to common resolution
+    // Get main window measurements
+    let main_outer_position = main_window.outer_position().map_err(|e| e.to_string())?;
+    let main_outer_size = main_window.outer_size().map_err(|e| e.to_string())?;
+    let main_inner_size = main_window.inner_size().map_err(|e| e.to_string())?;
     
-    let _max_window_height = (screen_size.1 as f64 * 0.6) as f64; // Use 60% of screen height
+    info!("🔍 DEBUG (startup): Main window - outer: {}x{} at ({}, {}), inner: {}x{}", 
+          main_outer_size.width, main_outer_size.height, main_outer_position.x, main_outer_position.y,
+          main_inner_size.width, main_inner_size.height);
+    
+    // Calculate AI response window size - SAME WIDTH as main window (startup)
+    let max_height = 500u32; // Maximum height constraint
+    
+    // Use main window outer width for exact width match
+    let ai_response_width = main_outer_size.width;
+    let ai_response_height = max_height.min(300); // Default height, max 500px
+    
+    info!("🔍 DEBUG (startup): AI Response size calculated: {}x{} (SAME WIDTH as main)", ai_response_width, ai_response_height);
+    
+    // Calculate position: CENTER X on screen, positioned below main window (startup)
+    let screen_size = monitor.size();
+    let gap_between_windows = 10i32;
+    let response_x = (screen_size.width as i32 - ai_response_width as i32) / 2; // CENTER on screen horizontally
+    let response_y = main_outer_position.y + main_outer_size.height as i32 + gap_between_windows; // Below main window
+    
+    info!("🔍 DEBUG (startup): Positioning calculation:");
+    info!("  - Main outer width: {}, AI width: {} (EXACT MATCH)", main_outer_size.width, ai_response_width);
+    info!("  - Main window position: ({}, {}), AI window position: ({}, {}) (SAME X, BELOW Y)", main_outer_position.x, main_outer_position.y, response_x, response_y);
+    info!("  - Gap between windows: {}px", gap_between_windows);
+    info!("  - Final position: ({}, {})", response_x, response_y);
+    
+    info!("📐 AI Response Window Position (startup): main={}x{} at ({}, {}), AI={}x{} at ({}, {}) [SAME X & SAME WIDTH, BELOW]", 
+          main_outer_size.width, main_outer_size.height, main_outer_position.x, main_outer_position.y,
+          ai_response_width, ai_response_height, response_x, response_y);
+    
+    // Screen bounds check for safety (startup)
+    let screen_size = monitor.size();
+    info!("🔍 DEBUG (startup): Screen size: {}x{} (scale: {})", screen_size.width, screen_size.height, scale_factor);
+    
+    // Ensure AI response window fits on screen (positioned below main window at startup)
+    if response_x + ai_response_width as i32 > screen_size.width as i32 ||
+       response_y + ai_response_height as i32 > screen_size.height as i32 {
+        warn!("⚠️ AI response window would go off-screen at startup when positioned below main window");
+    }
     
     // Create response window configuration (hidden by default)
+    // Use the same URL logic as the main create_ai_response_window function
+    let window_url = if cfg!(debug_assertions) {
+        // Development mode - serve from localhost with proper path
+        tauri::WebviewUrl::External("http://localhost:1420/ai-response.html".parse().unwrap())
+    } else {
+        // Production mode - use app protocol with proper path
+        tauri::WebviewUrl::App("ai-response.html".into())
+    };
+    
     let window_config = tauri::WebviewWindowBuilder::new(
         &app_handle,
         "ai-response",
-        tauri::WebviewUrl::App("ai-response.html".into())
+        window_url
     )
     .title("AI Response")
-    .inner_size(800.0, 150.0) // Start with minimal height for auto-sizing
-    .min_inner_size(800.0, 100.0)  // Lower minimum for auto-sizing
+    .inner_size(ai_response_width as f64, ai_response_height as f64)
+    .min_inner_size(200.0, 100.0)  // Conservative minimum size (startup)
+    .max_inner_size(ai_response_width as f64, max_height as f64)  // Respect max height constraint
     // Remove max size constraint to allow dynamic resizing
     .position(response_x as f64, response_y as f64)
     .resizable(true) // Make resizable for programmatic resizing
@@ -1319,7 +1507,7 @@ fn create_ai_response_window_at_startup(app_handle: AppHandle) -> Result<String,
             info!("AI response window created at startup (hidden)");
             
             // Set window capture protection for the response window too
-            if let Err(e) = set_window_capture_protection(window, true) {
+            if let Err(e) = set_window_capture_protection(&window, true) {
                 error!("Failed to set window capture protection on AI response window: {}", e);
             }
             
@@ -1334,21 +1522,47 @@ fn create_ai_response_window_at_startup(app_handle: AppHandle) -> Result<String,
 
 #[tauri::command]
 fn show_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
-    info!("Showing AI response window...");
+    info!("⚡ FAST SHOW: AI response window...");
     
     if let Some(window) = app_handle.get_webview_window("ai-response") {
+        // Use concurrent operations for faster display
         match window.show() {
             Ok(_) => {
-                info!("AI response window shown successfully");
+                // Ensure window is focused and visible for immediate use
+                let _ = window.set_focus();
+                info!("✅ FAST SHOW: AI response window shown and focused successfully");
                 Ok("AI response window shown".to_string())
             }
             Err(e) => {
-                error!("Failed to show AI response window: {}", e);
+                error!("❌ FAST SHOW: Failed to show AI response window: {}", e);
                 Err(format!("Failed to show AI response window: {}", e))
             }
         }
     } else {
-        warn!("AI response window not found - trying to create it");
+        warn!("⚠️ FAST SHOW: AI response window not found - creating new one immediately");
+        create_ai_response_window(app_handle)
+    }
+}
+
+// Async version for non-blocking show operations
+async fn show_ai_response_window_async(app_handle: AppHandle) -> Result<String, String> {
+    info!("⚡ ASYNC FAST SHOW: AI response window...");
+    
+    if let Some(window) = app_handle.get_webview_window("ai-response") {
+        match window.show() {
+            Ok(_) => {
+                // Ensure window is focused for immediate use
+                let _ = window.set_focus();
+                info!("✅ ASYNC FAST SHOW: AI response window shown and focused");
+                Ok("AI response window shown".to_string())
+            }
+            Err(e) => {
+                error!("❌ ASYNC FAST SHOW: Failed to show window: {}", e);
+                Err(format!("Failed to show AI response window: {}", e))
+            }
+        }
+    } else {
+        warn!("⚠️ ASYNC FAST SHOW: Window not found - creating new one");
         create_ai_response_window(app_handle)
     }
 }
@@ -1457,14 +1671,14 @@ async fn send_ai_response_data(app_handle: AppHandle, data: AiResponseData) -> R
                     // Give the DOM a moment to update, then trigger resize
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     
-                    // Calculate approximate height based on text length (rough estimate)
+                    // Calculate approximate height based on text length (rough estimate) - MAX 500px
                     let text_length = data.text.as_ref().map(|t| t.len()).unwrap_or(0);
                     let estimated_lines = (text_length / 80).max(1) + 2; // ~80 chars per line + padding
-                    let line_height = 27; // 21px font size * 1.3 line height
-                    let header_height = 50;
-                    let padding = 52; // content padding + window padding
+                    let line_height = 24; // Adjusted line height for better content fitting
+                    let header_height = 40;
+                    let padding = 40; // content padding + window padding
                     
-                    let estimated_height = (estimated_lines * line_height + header_height + padding).min(900) as u32; // Cap at reasonable height
+                    let estimated_height = (estimated_lines * line_height + header_height + padding).min(500) as u32; // Cap at 500px max
                     
                     info!("📏 RUST DEBUG: Auto-resize calculation: text_length={}, estimated_lines={}, estimated_height={}px", text_length, estimated_lines, estimated_height);
                     
@@ -1490,7 +1704,55 @@ async fn send_ai_response_data(app_handle: AppHandle, data: AiResponseData) -> R
 }
 
 #[tauri::command]
-fn set_window_capture_protection(window: tauri::WebviewWindow, protect: bool) -> Result<(), String> {
+fn reset_ai_response_window_size(app_handle: AppHandle) -> Result<String, String> {
+    info!("🔄 Resetting AI response window to match main window width...");
+    
+    if let Some(ai_window) = app_handle.get_webview_window("ai-response") {
+        if let Some(main_window) = app_handle.get_webview_window("main") {
+            // Get main window size for width matching
+            let main_size = main_window.outer_size().map_err(|e| {
+                error!("❌ Failed to get main window size: {}", e);
+                e.to_string()
+            })?;
+            
+            // Get monitor info for proper sizing
+            let monitor = ai_window.current_monitor().map_err(|e| e.to_string())?
+                .ok_or_else(|| "No monitor found".to_string())?;
+            let max_height = monitor.size();
+            let default_height = (max_height.height as f64 * 0.4) as u32; // 40% of screen height
+            
+            // Calculate centered AI response window size (80% of main window width)
+            let main_inner_size = main_window.inner_size().map_err(|e| e.to_string())?;
+            let reset_width = (main_inner_size.width as f64 * 0.8) as u32; // Maintain 80% for centering
+            let reset_height = default_height.min(500).max(200); // Between 200-500px
+            
+            info!("📐 Resetting AI response window: main_width={}px, reset_height={}px", reset_width, reset_height);
+            
+            match ai_window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+                width: reset_width,
+                height: reset_height,
+            })) {
+                Ok(_) => {
+                    info!("✅ AI response window reset to {}x{}", reset_width, reset_height);
+                    Ok(format!("AI response window reset to {}x{}", reset_width, reset_height))
+                }
+                Err(e) => {
+                    error!("❌ Failed to reset AI response window size: {}", e);
+                    Err(format!("Failed to reset window size: {}", e))
+                }
+            }
+        } else {
+            error!("❌ Main window not found for width reference");
+            Err("Main window not found".to_string())
+        }
+    } else {
+        error!("❌ AI response window not found for reset");
+        Err("AI response window not found".to_string())
+    }
+}
+
+#[tauri::command]
+fn set_window_capture_protection(window: &tauri::WebviewWindow, protect: bool) -> Result<(), String> {
     info!("Setting window capture protection to: {}", protect);
     #[cfg(target_os = "windows")]
     {
@@ -2002,62 +2264,66 @@ fn move_window_relative(app_handle: AppHandle, delta_x: i32, delta_y: i32) -> Re
         Err("Main window not found".to_string())
     }
 }
-
 #[tauri::command]
-fn resize_window_scale(app_handle: AppHandle, scale_factor: f64) -> Result<String, String> {
-    info!("📏 Scaling main window by factor: {}", scale_factor);
+fn resize_window_scale(app_handle: AppHandle, width: u32, height: u32) -> Result<String, String> {
+    info!("📏 Resizing main window to responsive size: {}x{}", width, height);
     
     if let Some(window) = app_handle.get_webview_window("main") {
-        // Get current size
+        // Get current size for comparison
         let current_size = window.outer_size().map_err(|e| {
             error!("❌ Failed to get current window size: {}", e);
             e.to_string()
         })?;
         
-        // Calculate new size based on scale factor
-        // Start with a base size (can be current size or a reference size)
-        let base_width = 400.0; // Reference width
-        let base_height = 600.0; // Reference height
+        // Get monitor info for DPI-aware scaling
+        let monitor = window.current_monitor().map_err(|e| e.to_string())?
+            .ok_or_else(|| "No monitor found".to_string())?;
+        let scale_factor = monitor.scale_factor();
+        let monitor_size = monitor.size();
         
-        let new_width = (base_width * scale_factor) as u32;
-        let new_height = (base_height * scale_factor) as u32;
+        // Apply DPI scaling to the requested dimensions
+        let dpi_adjusted_width = ((width as f64) * scale_factor) as u32;
+        let dpi_adjusted_height = ((height as f64) * scale_factor) as u32;
         
-        // Ensure minimum size
-        let min_width = 200;
-        let min_height = 300;
-        let final_width = new_width.max(min_width);
-        let final_height = new_height.max(min_height);
+        // Ensure minimum and maximum constraints based on monitor size
+        let min_width = 400;
+        let min_height = 200;
+        let max_width = ((monitor_size.width as f64) * 0.9) as u32;
+        let max_height = ((monitor_size.height as f64) * 0.9) as u32;
         
-        info!("📊 Window scale: current={}x{}, scale={}, base={}x{}, new={}x{}, final={}x{}", 
-              current_size.width, current_size.height, scale_factor, 
-              base_width as u32, base_height as u32, new_width, new_height, final_width, final_height);
+        let final_width = dpi_adjusted_width.max(min_width).min(max_width);
+        let final_height = dpi_adjusted_height.max(min_height).min(max_height);
+        
+        info!("📊 Responsive resize: current={}x{}, requested={}x{}, DPI_scale={:.2}, DPI_adjusted={}x{}, final={}x{}", 
+              current_size.width, current_size.height, width, height, scale_factor,
+              dpi_adjusted_width, dpi_adjusted_height, final_width, final_height);
         
         match window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
             width: final_width,
             height: final_height,
         })) {
             Ok(_) => {
-                info!("✅ Main window successfully scaled to: {}x{} (scale: {})", final_width, final_height, scale_factor);
+                info!("✅ Main window successfully resized to responsive size: {}x{}", final_width, final_height);
                 
                 // Verify the resize worked
                 match window.outer_size() {
                     Ok(new_size) => {
-                        info!("🔍 Post-scale verification: actual new size is {}x{}", new_size.width, new_size.height);
-                        Ok(format!("Window scaled to {}x{} ({}%)", new_size.width, new_size.height, (scale_factor * 100.0) as u32))
+                        info!("🔍 Post-resize verification: actual new size is {}x{}", new_size.width, new_size.height);
+                        Ok(format!("Window resized to {}x{} (requested: {}x{})", new_size.width, new_size.height, width, height))
                     }
                     Err(e) => {
-                        warn!("❌ Failed to verify window scale: {}", e);
-                        Ok(format!("Window scale attempted: {}x{}", final_width, final_height))
+                        warn!("❌ Failed to verify window resize: {}", e);
+                        Ok(format!("Window resize attempted: {}x{}", final_width, final_height))
                     }
                 }
             }
             Err(e) => {
-                error!("❌ Failed to scale main window: {}", e);
-                Err(format!("Failed to scale main window: {}", e))
+                error!("❌ Failed to resize main window: {}", e);
+                Err(format!("Failed to resize main window: {}", e))
             }
         }
     } else {
-        error!("❌ Main window not found for scale");
+        error!("❌ Main window not found for resize");
         Err("Main window not found".to_string())
     }
 }
@@ -2472,47 +2738,102 @@ async fn generate_ai_analysis_from_text(
                 .map_err(|e| e.to_string())
         },
         AIProvider::Pollinations => {
-            info!("[AI_PROVIDER] Using Pollinations for streaming accessibility-based analysis with model: {}", payload.model);
-            state.ensure_pollinations_client()?;
+            info!("[AI_PROVIDER] Attempting Pollinations for streaming analysis with model: {}", payload.model);
             
-            let client = {
-                let client_guard = state.pollinations_client.lock();
-                client_guard.as_ref().unwrap().clone()
-            };
-            
-            let model = pollinations::PollinationsModel::from_string(&payload.model)
-                .map_err(|e| format!("Invalid Pollinations model: {}", e))?;
-            
-            // Status update for Pollinations
+            // Status update for Pollinations attempt
             let status_update = AiResponseData {
                 message_type: "stream-token".to_string(),
-                text: Some("\n[AI] Connecting to Pollinations AI for streaming analysis of accessibility text...".to_string()),
+                text: Some("\n[AI] Attempting Pollinations AI for streaming analysis...".to_string()),
                 error: None,
             };
             let _ = send_ai_response_data(app_handle_clone.clone(), status_update).await;
             
-            // Use streaming text analysis
-            client.generate_answer_streaming(
-                &analysis_prompt, 
-                &context, 
-                model,
-                move |token: &str| {
-                    info!("[STREAM_TOKEN] Received accessibility analysis token: '{}'", token.chars().take(50).collect::<String>());
+            // Try Pollinations first, but fallback to OpenAI if it fails
+            match state.ensure_pollinations_client() {
+                Ok(()) => {
+                    let client = {
+                        let client_guard = state.pollinations_client.lock();
+                        client_guard.as_ref().unwrap().clone()
+                    };
                     
-                    // Send streaming token to UI
-                    let data = AiResponseData {
+                    let model = pollinations::PollinationsModel::from_string(&payload.model)
+                        .map_err(|e| format!("Invalid Pollinations model: {}", e))?;
+                    
+                    // Try Pollinations streaming
+                    let app_handle_for_streaming = app_handle_clone.clone();
+                    match client.generate_answer_streaming(
+                        &analysis_prompt, 
+                        &context, 
+                        model,
+                        move |token: &str| {
+                            info!("[STREAM_TOKEN] Received Pollinations token: '{}'", token.chars().take(50).collect::<String>());
+                            
+                            let data = AiResponseData {
+                                message_type: "stream-token".to_string(),
+                                text: Some(token.to_string()),
+                                error: None,
+                            };
+                            let app_handle_for_token = app_handle_for_streaming.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = send_ai_response_data(app_handle_for_token, data).await {
+                                    error!("Failed to send streaming token to UI: {}", e);
+                                }
+                            });
+                        }
+                    ).await {
+                        Ok(result) => {
+                            info!("[SUCCESS] Pollinations streaming completed successfully");
+                            Ok(result)
+                        },
+                        Err(pollinations_error) => {
+                            warn!("[FALLBACK] Pollinations failed: {}, falling back to OpenAI", pollinations_error);
+                            
+                            // Send fallback status
+                            let fallback_status = AiResponseData {
+                                message_type: "stream-token".to_string(),
+                                text: Some("\n[FALLBACK] Pollinations failed, switching to OpenAI...".to_string()),
+                                error: None,
+                            };
+                            let _ = send_ai_response_data(app_handle_clone.clone(), fallback_status).await;
+                            
+                            // Fallback to OpenAI
+                            state.ensure_openai_client()?;
+                            let openai_client = {
+                                let client_guard = state.openai_client.lock();
+                                client_guard.as_ref().unwrap().clone()
+                            };
+                            
+                            let openai_model = openai::OpenAIModel::GPT4Turbo; // Use a reliable model
+                            openai_client.generate_answer(&analysis_prompt, &context, openai_model)
+                                .await
+                                .map_err(|e| format!("OpenAI fallback also failed: {}", e))
+                        }
+                    }
+                },
+                Err(client_error) => {
+                    warn!("[FALLBACK] Pollinations client setup failed: {}, using OpenAI", client_error);
+                    
+                    // Send fallback status
+                    let fallback_status = AiResponseData {
                         message_type: "stream-token".to_string(),
-                        text: Some(token.to_string()),
+                        text: Some("\n[FALLBACK] Using OpenAI instead of Pollinations...".to_string()),
                         error: None,
                     };
-                    let app_handle_for_token = app_handle_clone.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = send_ai_response_data(app_handle_for_token, data).await {
-                            error!("Failed to send streaming token to UI: {}", e);
-                        }
-                    });
+                    let _ = send_ai_response_data(app_handle_clone.clone(), fallback_status).await;
+                    
+                    // Fallback to OpenAI
+                    state.ensure_openai_client()?;
+                    let openai_client = {
+                        let client_guard = state.openai_client.lock();
+                        client_guard.as_ref().unwrap().clone()
+                    };
+                    
+                    let openai_model = openai::OpenAIModel::GPT4Turbo;
+                    openai_client.generate_answer(&analysis_prompt, &context, openai_model)
+                        .await
+                        .map_err(|e| format!("OpenAI fallback failed: {}", e))
                 }
-            ).await.map_err(|e| e.to_string())
+            }
         }
     }?;
     
@@ -2787,6 +3108,92 @@ fn extract_confidence_from_text(text: &str) -> f32 {
     // Default confidence
     warn!("[EXTRACT] No confidence indicators found, using default: 0.75");
     0.75
+}
+
+// DPI-aware window management command implementations
+
+#[tauri::command]
+fn setup_dpi_aware_positioning(app_handle: AppHandle) -> Result<String, String> {
+    info!("🖥️ Setting up DPI-aware positioning for main window");
+    
+    match window_manager::setup_main_window_dpi_aware(&app_handle) {
+        Ok(_) => Ok("DPI-aware positioning setup completed".to_string()),
+        Err(e) => {
+            error!("Failed to setup DPI-aware positioning: {}", e);
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
+fn get_window_info(app_handle: AppHandle) -> Result<window_manager::WindowConfiguration, String> {
+    info!("📊 Getting current window information");
+    
+    if let Some(window) = app_handle.get_webview_window("main") {
+        match window_manager::get_window_configuration(&window) {
+            Ok(config) => {
+                info!("✅ Window info: {}x{} at ({}, {}) on {}", 
+                      config.width, config.height, config.x, config.y, config.monitor_name);
+                Ok(config)
+            }
+            Err(e) => {
+                error!("Failed to get window info: {}", e);
+                Err(e)
+            }
+        }
+    } else {
+        Err("Main window not found".to_string())
+    }
+}
+
+#[tauri::command]
+fn get_monitors_info(app_handle: AppHandle) -> Result<Vec<serde_json::Value>, String> {
+    info!("🖥️ Getting monitors information");
+    
+    match window_manager::get_monitors_info(&app_handle) {
+        Ok(monitors) => {
+            info!("✅ Found {} monitors", monitors.len());
+            Ok(monitors)
+        }
+        Err(e) => {
+            error!("Failed to get monitors info: {}", e);
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
+fn lock_window_size(app_handle: AppHandle, width: u32, height: u32) -> Result<String, String> {
+    info!("🔒 Locking window size to {}x{}", width, height);
+    
+    if let Some(window) = app_handle.get_webview_window("main") {
+        match window_manager::lock_window_size(&window, width, height) {
+            Ok(_) => Ok(format!("Window size locked to {}x{}", width, height)),
+            Err(e) => {
+                error!("Failed to lock window size: {}", e);
+                Err(e)
+            }
+        }
+    } else {
+        Err("Main window not found".to_string())
+    }
+}
+
+#[tauri::command]
+fn ensure_window_visible(app_handle: AppHandle) -> Result<String, String> {
+    info!("👁️ Ensuring window is visible on current screen setup");
+    
+    if let Some(window) = app_handle.get_webview_window("main") {
+        match window_manager::ensure_window_visible(&window) {
+            Ok(_) => Ok("Window visibility check completed".to_string()),
+            Err(e) => {
+                error!("Failed to ensure window visibility: {}", e);
+                Err(e)
+            }
+        }
+    } else {
+        Err("Main window not found".to_string())
+    }
 }
 
 // Helper function to get environment variables using runtime loading
