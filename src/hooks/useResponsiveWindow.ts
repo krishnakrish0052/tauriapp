@@ -162,7 +162,7 @@ export const useResponsiveWindow = (config: Partial<ResponsiveConfig> = {}) => {
     }
     
     // Store current dimensions for AI response window matching
-    window.mockMateWindowWidth = targetWidth;
+    (window as any).mockMateWindowWidth = targetWidth;
     
     await resizeWindow({ width: targetWidth, height: targetHeight });
   }, [finalConfig.defaultHeight, finalConfig.defaultWidth, resizeWindow, screenSize, getOptimalSize]);

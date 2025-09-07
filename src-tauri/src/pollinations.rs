@@ -56,13 +56,26 @@ pub struct ModelInfo {
 pub struct PollinationsClient {
     client: Client,
     base_url: String,
+    api_key: String,
+    referrer: String,
 }
 
 impl PollinationsClient {
-    pub fn new(_api_key: String, _referer: String) -> Self {
+    pub fn new(api_key: String, referrer: String) -> Self {
+        // Optimized HTTP client for faster responses
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))  // Reasonable timeout
+            .connect_timeout(std::time::Duration::from_secs(5))  // Fast connection
+            .tcp_keepalive(std::time::Duration::from_secs(60))
+            .http2_prior_knowledge()  // Use HTTP/2 for better performance
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+            
         Self {
-            client: Client::new(),
+            client,
             base_url: "https://text.pollinations.ai".to_string(),
+            api_key,
+            referrer,
         }
     }
 
@@ -202,7 +215,8 @@ Provide a confident, direct, and authentic answer that demonstrates your qualifi
             .append_pair("model", model.as_str())
             .append_pair("private", "true")
             .append_pair("referrer", "mockmate")
-            .append_pair("temperature", "0.7");
+            .append_pair("temperature", "0.3")  // Lower temperature for faster responses
+            .append_pair("max_tokens", "400");  // Limit tokens for speed
 
         info!("Pollinations text request URL: {}", url.as_str().chars().take(200).collect::<String>() + "...");
         
@@ -326,10 +340,13 @@ Provide only the JSON response, no other text.",
         let mut payload = serde_json::json!({
             "model": model.as_str(),
             "messages": messages,
-            "stream": false,
+            "stream": true,
             "private": true,
-            "temperature": 0.7,
-            "max_tokens": 1500
+            "temperature": 0.3,  // Lower temperature for faster, more focused responses
+            "max_tokens": 500,   // Reduced for faster responses
+            "top_p": 0.9,        // Optimize sampling for speed
+            "presence_penalty": 0.1,
+            "frequency_penalty": 0.1
         });
 
         // Add referrer to payload if available
@@ -725,7 +742,7 @@ Provide only the JSON response, no other text.",
 
 Interview Question: {}
 
-Please provide a comprehensive and professional answer to this interview question.", system_prompt, question);
+Provide a direct, concise answer. Maximum 2-3 sentences. Start immediately with the answer.", system_prompt, question);
 
         info!("Generating streaming answer with Pollinations model: {}", model.as_str());
         
@@ -738,7 +755,7 @@ Please provide a comprehensive and professional answer to this interview questio
         // Build URL with streaming enabled
         let encoded_prompt = urlencoding::encode(&prompt);
         let url = format!(
-            "{}/{}?model={}&stream=true&private=true&referrer={}&temperature=0.7",
+            "{}/{}?model={}&stream=true&private=true&referrer={}&temperature=0.3&max_tokens=400&top_p=0.9",
             self.base_url, encoded_prompt, model.as_str(), referrer
         );
 

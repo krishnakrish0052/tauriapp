@@ -91,7 +91,7 @@ function App() {
       startTime: 0,
     },
     isStartingSession: false,
-    selectedModel: 'openai', // Use working fallback model from backend
+    selectedModel: 'llama', // Use fast Llama model as default
     selectedProvider: 'pollinations',
     isModelDropdownOpen: false,
     availableModels: [], // Start with empty array, will be populated from backend
@@ -200,13 +200,14 @@ function App() {
         console.error('❌ Failed to fetch models from backend:', error);
         // Set fallback models if backend fetch fails
         const fallbackModels = [
+          { id: 'llama', name: 'Llama (Fast)', provider: 'pollinations' },
           { id: 'openai', name: 'OpenAI GPT-4', provider: 'pollinations' },
           { id: 'mistral', name: 'Mistral', provider: 'pollinations' },
         ];
         setState(prev => ({
           ...prev,
           availableModels: fallbackModels,
-          selectedModel: 'openai' // Safe fallback
+          selectedModel: 'llama' // Fast fallback model
         }));
         console.log('🔧 Using fallback models due to backend fetch error');
       }
@@ -500,13 +501,13 @@ function App() {
     setState(prev => ({ ...prev, isLoading: true, isStreaming: true }));
     
     try {
-      // Reset response window size first (using below-main enhanced window)
-      console.log('📰 SEND BUTTON: Resetting AI response window (below-main enhanced)...');
+      // Reset response window size first (using DPI-FIXED below-main enhanced window)
+      console.log('📰 SEND BUTTON: Resetting AI response window (DPI-FIXED below-main enhanced)...');
       await invoke('reset_ai_response_window_enhanced_below_size').catch(err => {
-        console.warn('⚠️ Failed to reset AI response window size:', err);
+        console.warn('⚠️ Failed to reset DPI-fixed AI response window size:', err);
         // Try to create the window if it doesn't exist
         invoke('create_ai_response_window_enhanced_below').catch(e => 
-          console.warn('⚠️ Failed to create below-main enhanced window:', e)
+          console.warn('⚠️ Failed to create DPI-fixed below-main enhanced window:', e)
         );
       });
       
@@ -714,13 +715,13 @@ function App() {
     setState(prev => ({ ...prev, isLoading: true, isStreaming: true }));
     
     try {
-      // Reset response window size first (using below-main enhanced window)
-      console.log('📰 AI BUTTON: Resetting AI response window (below-main enhanced)...');
+      // Reset response window size first (using DPI-FIXED below-main enhanced window)
+      console.log('📰 AI BUTTON: Resetting AI response window (DPI-FIXED below-main enhanced)...');
       await invoke('reset_ai_response_window_enhanced_below_size').catch(err => {
-        console.warn('⚠️ Failed to reset AI response window size:', err);
+        console.warn('⚠️ Failed to reset DPI-fixed AI response window size:', err);
         // Try to create the window if it doesn't exist
         invoke('create_ai_response_window_enhanced_below').catch(e => 
-          console.warn('⚠️ Failed to create below-main enhanced window:', e)
+          console.warn('⚠️ Failed to create DPI-fixed below-main enhanced window:', e)
         );
       });
       
@@ -798,13 +799,13 @@ function App() {
     setState(prev => ({ ...prev, isLoading: true, isStreaming: true }));
     
     try {
-      // Reset response window size first (using below-main enhanced window)
-      console.log('📰 SCREEN: Resetting AI response window (below-main enhanced)...');
+      // Reset response window size first (using DPI-FIXED below-main enhanced window)
+      console.log('📰 SCREEN: Resetting AI response window (DPI-FIXED below-main enhanced)...');
       await invoke('reset_ai_response_window_enhanced_below_size').catch(err => {
-        console.warn('⚠️ Failed to reset AI response window size:', err);
+        console.warn('⚠️ Failed to reset DPI-fixed AI response window size:', err);
         // Try to create the window if it doesn't exist
         invoke('create_ai_response_window_enhanced_below').catch(e => 
-          console.warn('⚠️ Failed to create below-main enhanced window:', e)
+          console.warn('⚠️ Failed to create DPI-fixed below-main enhanced window:', e)
         );
       });
       

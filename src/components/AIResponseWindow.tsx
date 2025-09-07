@@ -25,7 +25,7 @@ export const AIResponseWindow: React.FC<AIResponseWindowProps> = ({
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [isInitialized, setIsInitialized] = useState(false);
 
-  // Initialize position to center of parent when visible
+  // Initialize position to center of parent when visible (DPI-aware)
   useEffect(() => {
     if (isVisible && !isInitialized && containerRef.current) {
       const container = containerRef.current;
@@ -34,8 +34,17 @@ export const AIResponseWindow: React.FC<AIResponseWindowProps> = ({
         const parentRect = parent.getBoundingClientRect();
         const containerRect = container.getBoundingClientRect();
         
+        // DPI-aware centering calculation
+        const devicePixelRatio = window.devicePixelRatio || 1;
         const centerX = (parentRect.width - containerRect.width) / 2;
         const centerY = (parentRect.height - containerRect.height) / 2;
+        
+        console.log('🔍 AIResponseWindow DPI info:', {
+          devicePixelRatio,
+          parentRect: { width: parentRect.width, height: parentRect.height },
+          containerRect: { width: containerRect.width, height: containerRect.height },
+          calculatedPosition: { x: centerX, y: centerY }
+        });
         
         setPosition({ x: centerX, y: centerY });
         setIsInitialized(true);

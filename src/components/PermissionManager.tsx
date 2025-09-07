@@ -127,7 +127,7 @@ export function PermissionManager({ onPermissionsGranted }: PermissionManagerPro
         </div>
       </div>
       
-      <style jsx>{`
+      <style>{`
         .permission-manager {
           position: fixed;
           top: 0;

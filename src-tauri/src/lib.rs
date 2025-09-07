@@ -58,6 +58,8 @@ pub fn run() -> Result<()> {
             hide_ai_response_window,
             send_ai_response_data,
             reset_ai_response_window_size,
+            create_ai_response_window_enhanced_below,
+            reset_ai_response_window_enhanced_below_size,
             // Real-time transcription commands
             realtime_transcription::start_microphone_transcription,
             realtime_transcription::start_system_audio_transcription,
@@ -1668,8 +1670,8 @@ async fn send_ai_response_data(app_handle: AppHandle, data: AiResponseData) -> R
                 if data.message_type == "stream" || data.message_type == "complete" {
                     info!("🔄 RUST DEBUG: Triggering automatic resize after content update");
                     
-                    // Give the DOM a moment to update, then trigger resize
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    // Minimal delay for DOM update - optimized for speed
+                    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                     
                     // Calculate approximate height based on text length (rough estimate) - MAX 500px
                     let text_length = data.text.as_ref().map(|t| t.len()).unwrap_or(0);
@@ -1700,6 +1702,174 @@ async fn send_ai_response_data(app_handle: AppHandle, data: AiResponseData) -> R
     } else {
         warn!("AI response window not found");
         Err("AI response window not found".to_string())
+    }
+}
+
+/// NEW: Create AI response window positioned below main window with proper DPI-aware centering
+#[tauri::command]
+fn create_ai_response_window_enhanced_below(app_handle: AppHandle) -> Result<String, String> {
+    info!("✨ Creating AI response window positioned below main (enhanced DPI-aware)...");
+    
+    let main_window = match app_handle.get_webview_window("main") {
+        Some(window) => window,
+        None => {
+            error!("Main window not found");
+            return Err("Main window not found".to_string());
+        }
+    };
+    
+    // Get DPI scale factor for proper scaling
+    let monitor = main_window.current_monitor().map_err(|e| e.to_string())?
+        .ok_or_else(|| "No monitor found".to_string())?;
+    let scale_factor = monitor.scale_factor();
+    
+    info!("🔍 DPI Scale factor: {:.2}", scale_factor);
+    
+    // Get main window measurements in physical pixels
+    let main_outer_position = main_window.outer_position().map_err(|e| e.to_string())?;
+    let main_outer_size = main_window.outer_size().map_err(|e| e.to_string())?;
+    
+    info!("🔍 Main window: {}x{} at ({}, {})", 
+          main_outer_size.width, main_outer_size.height, 
+          main_outer_position.x, main_outer_position.y);
+    
+    // AI response window dimensions - SAME WIDTH as main window
+    let ai_width = main_outer_size.width;
+    let ai_height = 300u32; // Default height
+    
+    // CRITICAL FIX: Position calculation for proper centering with DPI awareness
+    // Calculate center X position of main window in logical coordinates first
+    let main_center_x_logical = (main_outer_position.x as f64 / scale_factor) + (main_outer_size.width as f64 / scale_factor / 2.0);
+    let ai_width_logical = ai_width as f64 / scale_factor;
+    
+    // Calculate AI window position to center it below main window (logical coordinates)
+    let ai_x_logical = main_center_x_logical - (ai_width_logical / 2.0);
+    let ai_y_logical = (main_outer_position.y as f64 / scale_factor) + (main_outer_size.height as f64 / scale_factor) + 2.0; // 2px gap - tight integration
+    
+    // Convert back to physical coordinates ONLY ONCE
+    let ai_x_physical = (ai_x_logical * scale_factor) as i32;
+    let ai_y_physical = (ai_y_logical * scale_factor) as i32;
+    
+    info!("🎯 DPI-FIXED Positioning:");
+    info!("  - Main center logical: {:.1}", main_center_x_logical);
+    info!("  - AI window logical: {:.1}x{:.1} at ({:.1}, {:.1})", ai_width_logical, ai_height as f64 / scale_factor, ai_x_logical, ai_y_logical);
+    info!("  - AI window physical: {}x{} at ({}, {})", ai_width, ai_height, ai_x_physical, ai_y_physical);
+    info!("  - Scale factor: {:.2} (applied once)", scale_factor);
+    
+    // Create response window configuration
+    let window_url = if cfg!(debug_assertions) {
+        tauri::WebviewUrl::External("http://localhost:1420/ai-response.html".parse().unwrap())
+    } else {
+        tauri::WebviewUrl::App("ai-response.html".into())
+    };
+    
+    let window_config = tauri::WebviewWindowBuilder::new(
+        &app_handle,
+        "ai-response",
+        window_url
+    )
+    .title("AI Response")
+    .inner_size(ai_width as f64, ai_height as f64)
+    .min_inner_size(200.0, 100.0)
+    .position(ai_x_physical as f64, ai_y_physical as f64)
+    .resizable(true)
+    .fullscreen(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .visible(true)
+    .decorations(false)
+    .transparent(true)
+    .shadow(false)
+    .focused(true);
+    
+    match window_config.build() {
+        Ok(window) => {
+            info!("✅ AI response window created below main with DPI-aware centering");
+            
+            // Set window capture protection
+            if let Err(e) = set_window_capture_protection(&window, true) {
+                error!("Failed to set window capture protection: {}", e);
+            }
+            
+            Ok("AI response window created below main".to_string())
+        }
+        Err(e) => {
+            error!("Failed to create AI response window: {}", e);
+            Err(format!("Failed to create AI response window: {}", e))
+        }
+    }
+}
+
+/// NEW: Reset AI response window size and position it below main window with DPI-aware centering
+#[tauri::command]
+fn reset_ai_response_window_enhanced_below_size(app_handle: AppHandle) -> Result<String, String> {
+    info!("🔄 Resetting AI response window below main with DPI-aware centering...");
+    
+    if let Some(ai_window) = app_handle.get_webview_window("ai-response") {
+        if let Some(main_window) = app_handle.get_webview_window("main") {
+            // Get DPI scale factor
+            let monitor = main_window.current_monitor().map_err(|e| e.to_string())?
+                .ok_or_else(|| "No monitor found".to_string())?;
+            let scale_factor = monitor.scale_factor();
+            
+            // Get main window measurements
+            let main_outer_position = main_window.outer_position().map_err(|e| e.to_string())?;
+            let main_outer_size = main_window.outer_size().map_err(|e| e.to_string())?;
+            
+            // AI response window dimensions - SAME WIDTH as main window
+            let ai_width = main_outer_size.width;
+            let ai_height = 300u32; // Reset to default height
+            
+            // CRITICAL FIX: Position calculation for proper centering with DPI awareness
+            // Calculate center X position of main window in logical coordinates first
+            let main_center_x_logical = (main_outer_position.x as f64 / scale_factor) + (main_outer_size.width as f64 / scale_factor / 2.0);
+            let ai_width_logical = ai_width as f64 / scale_factor;
+            
+            // Calculate AI window position to center it below main window (logical coordinates)
+            let ai_x_logical = main_center_x_logical - (ai_width_logical / 2.0);
+            let ai_y_logical = (main_outer_position.y as f64 / scale_factor) + (main_outer_size.height as f64 / scale_factor) + 2.0; // 2px gap - tight integration
+            
+            // Convert back to physical coordinates ONLY ONCE
+            let ai_x_physical = (ai_x_logical * scale_factor) as i32;
+            let ai_y_physical = (ai_y_logical * scale_factor) as i32;
+            
+            info!("🔄 DPI-FIXED Reset Positioning:");
+            info!("  - Scale factor: {:.2}", scale_factor);
+            info!("  - Main center logical: {:.1}", main_center_x_logical);
+            info!("  - AI reset physical: {}x{} at ({}, {})", ai_width, ai_height, ai_x_physical, ai_y_physical);
+            
+            // Apply size and position in one operation
+            match ai_window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+                width: ai_width,
+                height: ai_height,
+            })) {
+                Ok(_) => {
+                    match ai_window.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
+                        x: ai_x_physical,
+                        y: ai_y_physical,
+                    })) {
+                        Ok(_) => {
+                            info!("✅ AI response window reset below main with DPI-aware centering");
+                            Ok(format!("AI window reset: {}x{} at ({}, {})", ai_width, ai_height, ai_x_physical, ai_y_physical))
+                        }
+                        Err(e) => {
+                            error!("Failed to reset AI window position: {}", e);
+                            Err(format!("Failed to reset position: {}", e))
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to reset AI window size: {}", e);
+                    Err(format!("Failed to reset size: {}", e))
+                }
+            }
+        } else {
+            error!("Main window not found for AI window reset");
+            Err("Main window not found".to_string())
+        }
+    } else {
+        warn!("AI response window not found for reset - creating new one");
+        create_ai_response_window_enhanced_below(app_handle)
     }
 }
 
