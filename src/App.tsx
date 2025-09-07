@@ -91,7 +91,7 @@ function App() {
       startTime: 0,
     },
     isStartingSession: false,
-    selectedModel: 'llama', // Use fast Llama model as default
+    selectedModel: 'llama-fast-roblox', // Use fast Llama model as default with seed tier referrer
     selectedProvider: 'pollinations',
     isModelDropdownOpen: false,
     availableModels: [], // Start with empty array, will be populated from backend
@@ -200,14 +200,15 @@ function App() {
         console.error('❌ Failed to fetch models from backend:', error);
         // Set fallback models if backend fetch fails
         const fallbackModels = [
-          { id: 'llama', name: 'Llama (Fast)', provider: 'pollinations' },
+          { id: 'llama-fast-roblox', name: 'Llama Fast Roblox', provider: 'pollinations' },
+          { id: 'llama-roblox', name: 'Llama Roblox', provider: 'pollinations' },
           { id: 'openai', name: 'OpenAI GPT-4', provider: 'pollinations' },
           { id: 'mistral', name: 'Mistral', provider: 'pollinations' },
         ];
         setState(prev => ({
           ...prev,
           availableModels: fallbackModels,
-          selectedModel: 'llama' // Fast fallback model
+          selectedModel: 'llama-fast-roblox' // Fast model with seed tier referrer
         }));
         console.log('🔧 Using fallback models due to backend fetch error');
       }

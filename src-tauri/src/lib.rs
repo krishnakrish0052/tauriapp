@@ -17,6 +17,7 @@ pub mod realtime_transcription;
 pub mod accessibility_reader; // Windows Accessibility API text reader
 pub mod window_manager; // DPI-aware window management
 pub mod permissions; // Permission management for audio access
+pub mod stereo_mix_manager; // Windows Stereo Mix automatic enablement
 
 // New Phase 2 modules
 pub mod database;
@@ -143,7 +144,13 @@ pub fn run() -> Result<()> {
             // Permission management
             permissions::check_permissions,
             permissions::request_permissions,
-            permissions::initialize_first_run
+            permissions::initialize_first_run,
+            // Stereo Mix management
+            stereo_mix_manager::check_stereo_mix_enabled,
+            stereo_mix_manager::enable_stereo_mix,
+            stereo_mix_manager::open_recording_devices,
+            stereo_mix_manager::get_stereo_mix_capabilities,
+            stereo_mix_manager::get_stereo_mix_instructions
         ])
         .manage(AppState::new())
         .setup(|app| {
@@ -577,6 +584,7 @@ async fn pollinations_generate_answer_streaming(
 
     let model = pollinations::PollinationsModel::from_string(&payload.model)
         .map_err(|e| format!("Invalid Pollinations model: {}", e))?;
+    let model_clone = model.clone(); // Clone for fallback use
 
     // Immediately show the AI response window for faster response (no await)
     let app_handle_show = app_handle.clone();
@@ -591,18 +599,7 @@ async fn pollinations_generate_answer_streaming(
     info!("⚡ SPEED OPTIMIZED: Starting progressive streaming for AI response window");
     let _ = app_handle.emit("ai-stream-start", ());
     
-    // Send immediate status to show window is ready
-    let ready_data = AiResponseData {
-        message_type: "stream-token".to_string(),
-        text: Some("[READY] AI response window ready, generating answer...".to_string()),
-        error: None,
-    };
-    let app_handle_ready = app_handle.clone();
-    tokio::spawn(async move {
-        if let Err(e) = send_ai_response_data(app_handle_ready, ready_data).await {
-            warn!("Failed to send ready signal: {}", e);
-        }
-    });
+    // Skip ready signal for maximum speed - start immediately
 
     // Stream the response with callback to update UI progressively
     let app_handle_clone = app_handle.clone();
@@ -666,7 +663,7 @@ async fn pollinations_generate_answer_streaming(
             
             // Try non-streaming fallback
             info!("🔄 Attempting non-streaming fallback...");
-            match client.generate_answer(&payload.question, &context, model).await {
+            match client.generate_answer(&payload.question, &context, model_clone).await {
                 Ok(fallback_response) => {
                     info!("✅ Non-streaming fallback succeeded: {} chars", fallback_response.len());
                     
@@ -768,10 +765,11 @@ async fn pollinations_generate_answer_post_streaming(
 
     // Stream the response with callback to update UI progressively
     let app_handle_clone = app_handle.clone();
+    let model_clone = model.clone(); // Clone model to avoid ownership issues
     let result = client.generate_answer_post_streaming(
         &payload.question, 
         &context, 
-        model,
+        model_clone,
         move |token: &str| {
             info!("📝 Streaming token (POST): '{}' (length: {})", token.chars().take(50).collect::<String>(), token.len());
             
@@ -1228,7 +1226,7 @@ fn create_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
     
     // Use main window INNER width for exact content width match
     let ai_response_width = main_inner_size.width;
-    let ai_response_height = max_height.min(300); // Default height, max 500px
+    let ai_response_height = 500u32; // Fixed default height of 500px
     
     info!("🔍 DEBUG: AI Response size calculated: {}x{} (SAME INNER WIDTH as main)", ai_response_width, ai_response_height);
     
@@ -1301,7 +1299,7 @@ fn create_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
     .title("AI Response")
     .inner_size(physical_width as f64, physical_height as f64)
     .min_inner_size(200.0, 100.0)  // Conservative minimum size
-    .max_inner_size(physical_width as f64, 500.0 * scale_factor)  // Respect max height constraint with DPI scaling
+    .max_inner_size(physical_width as f64, 800.0 * scale_factor)  // Allow up to 800px max height with DPI scaling
     // Remove max size constraint to allow dynamic resizing
     .position(response_x as f64, response_y as f64)
     .resizable(true) // Make resizable for programmatic resizing
@@ -1470,7 +1468,7 @@ fn create_ai_response_window_at_startup(app_handle: AppHandle) -> Result<String,
     
     // Use main window outer width for exact width match
     let ai_response_width = main_outer_size.width;
-    let ai_response_height = max_height.min(300); // Default height, max 500px
+    let ai_response_height = max_height.min(500); // Default height 500px
     
     info!("🔍 DEBUG (startup): AI Response size calculated: {}x{} (SAME WIDTH as main)", ai_response_width, ai_response_height);
     
@@ -1693,29 +1691,26 @@ async fn send_ai_response_data(app_handle: AppHandle, data: AiResponseData) -> R
             Ok(_) => {
                 info!("✅ RUST DEBUG: JavaScript evaluation successful - AI response data sent successfully");
                 
-                // For stream messages, also trigger an immediate resize calculation from Rust side
-                if data.message_type == "stream" || data.message_type == "complete" {
-                    info!("🔄 RUST DEBUG: Triggering automatic resize after content update");
+                // Keep window at fixed 500px height - no automatic content-based resizing
+                if data.message_type == "complete" {
+                    info!("🔄 RUST DEBUG: Content complete - ensuring window stays at 500px height");
                     
-                    // Minimal delay for DOM update - optimized for speed
-                    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                    // Always maintain 500px height for consistent experience
+                    let fixed_height = 500u32;
                     
-                    // Calculate approximate height based on text length (rough estimate) - MAX 500px
-                    let text_length = data.text.as_ref().map(|t| t.len()).unwrap_or(0);
-                    let estimated_lines = (text_length / 80).max(1) + 2; // ~80 chars per line + padding
-                    let line_height = 24; // Adjusted line height for better content fitting
-                    let header_height = 40;
-                    let padding = 40; // content padding + window padding
+                    info!("📏 RUST DEBUG: Maintaining fixed height: {}px (no content-based auto-resize)", fixed_height);
                     
-                    let estimated_height = (estimated_lines * line_height + header_height + padding).min(500) as u32; // Cap at 500px max
-                    
-                    info!("📏 RUST DEBUG: Auto-resize calculation: text_length={}, estimated_lines={}, estimated_height={}px", text_length, estimated_lines, estimated_height);
-                    
-                    // Trigger resize from Rust side
-                    if let Err(resize_err) = resize_ai_response_window(app_handle.clone(), estimated_height) {
-                        warn!("❌ RUST DEBUG: Auto-resize failed: {}", resize_err);
-                    } else {
-                        info!("✅ RUST DEBUG: Auto-resize triggered successfully from Rust");
+                    // Only resize if current height is different from 500px
+                    if let Some(window) = app_handle.get_webview_window("ai-response") {
+                        if let Ok(current_size) = window.outer_size() {
+                            if current_size.height != fixed_height {
+                                if let Err(resize_err) = resize_ai_response_window(app_handle.clone(), fixed_height) {
+                                    warn!("❌ RUST DEBUG: Failed to maintain 500px height: {}", resize_err);
+                                } else {
+                                    info!("✅ RUST DEBUG: Window height maintained at 500px");
+                                }
+                            }
+                        }
                     }
                 }
                 
@@ -1762,7 +1757,7 @@ fn create_ai_response_window_enhanced_below(app_handle: AppHandle) -> Result<Str
     
     // AI response window dimensions - SAME WIDTH as main window
     let ai_width = main_outer_size.width;
-    let ai_height = 300u32; // Default height
+    let ai_height = 500u32; // Increased default height for better visibility
     
     // CRITICAL FIX: Position calculation for proper centering with DPI awareness
     // Calculate center X position of main window in logical coordinates first
@@ -1771,17 +1766,20 @@ fn create_ai_response_window_enhanced_below(app_handle: AppHandle) -> Result<Str
     
     // Calculate AI window position to center it below main window (logical coordinates)
     let ai_x_logical = main_center_x_logical - (ai_width_logical / 2.0);
-    let ai_y_logical = (main_outer_position.y as f64 / scale_factor) + (main_outer_size.height as f64 / scale_factor) + 2.0; // 2px gap - tight integration
+    // Adjust gap based on scale factor to compensate for DPI scaling issues
+    let gap_adjustment = if scale_factor < 1.5 { -2.0 / scale_factor } else { 0.0 };
+    let ai_y_logical = (main_outer_position.y as f64 / scale_factor) + (main_outer_size.height as f64 / scale_factor) + gap_adjustment;
     
     // Convert back to physical coordinates ONLY ONCE
     let ai_x_physical = (ai_x_logical * scale_factor) as i32;
     let ai_y_physical = (ai_y_logical * scale_factor) as i32;
     
     info!("🎯 DPI-FIXED Positioning:");
+    info!("  - Scale factor: {:.2} (gap adjustment: {:.1}px)", scale_factor, gap_adjustment);
     info!("  - Main center logical: {:.1}", main_center_x_logical);
     info!("  - AI window logical: {:.1}x{:.1} at ({:.1}, {:.1})", ai_width_logical, ai_height as f64 / scale_factor, ai_x_logical, ai_y_logical);
     info!("  - AI window physical: {}x{} at ({}, {})", ai_width, ai_height, ai_x_physical, ai_y_physical);
-    info!("  - Scale factor: {:.2} (applied once)", scale_factor);
+    info!("  - Gap calculation: scale < 1.5? {}, adjustment: {:.2}px logical", scale_factor < 1.5, gap_adjustment);
     
     // Create response window configuration
     let window_url = if cfg!(debug_assertions) {
@@ -1806,7 +1804,7 @@ fn create_ai_response_window_enhanced_below(app_handle: AppHandle) -> Result<Str
     .visible(true)
     .decorations(false)
     .transparent(true)
-    .shadow(false)
+    .shadow(false)  // Disable shadow to prevent visual gaps
     .focused(true);
     
     match window_config.build() {
@@ -1845,7 +1843,7 @@ fn reset_ai_response_window_enhanced_below_size(app_handle: AppHandle) -> Result
             
             // AI response window dimensions - SAME WIDTH as main window
             let ai_width = main_outer_size.width;
-            let ai_height = 300u32; // Reset to default height
+            let ai_height = 500u32; // Reset to default height of 500px
             
             // CRITICAL FIX: Position calculation for proper centering with DPI awareness
             // Calculate center X position of main window in logical coordinates first
@@ -1854,16 +1852,19 @@ fn reset_ai_response_window_enhanced_below_size(app_handle: AppHandle) -> Result
             
             // Calculate AI window position to center it below main window (logical coordinates)
             let ai_x_logical = main_center_x_logical - (ai_width_logical / 2.0);
-            let ai_y_logical = (main_outer_position.y as f64 / scale_factor) + (main_outer_size.height as f64 / scale_factor) + 2.0; // 2px gap - tight integration
+            // Adjust gap based on scale factor to compensate for DPI scaling issues
+            let gap_adjustment = if scale_factor < 1.5 { -3.0 / scale_factor } else { -1.0 };
+            let ai_y_logical = (main_outer_position.y as f64 / scale_factor) + (main_outer_size.height as f64 / scale_factor) + gap_adjustment;
             
             // Convert back to physical coordinates ONLY ONCE
             let ai_x_physical = (ai_x_logical * scale_factor) as i32;
             let ai_y_physical = (ai_y_logical * scale_factor) as i32;
             
             info!("🔄 DPI-FIXED Reset Positioning:");
-            info!("  - Scale factor: {:.2}", scale_factor);
+            info!("  - Scale factor: {:.2} (gap adjustment: {:.1}px)", scale_factor, gap_adjustment);
             info!("  - Main center logical: {:.1}", main_center_x_logical);
             info!("  - AI reset physical: {}x{} at ({}, {})", ai_width, ai_height, ai_x_physical, ai_y_physical);
+            info!("  - Gap calculation: scale < 1.5? {}, adjustment: {:.2}px logical", scale_factor < 1.5, gap_adjustment);
             
             // Apply size and position in one operation
             match ai_window.set_size(tauri::Size::Physical(tauri::PhysicalSize {

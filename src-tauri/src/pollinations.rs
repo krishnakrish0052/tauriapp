@@ -23,9 +23,9 @@ impl PollinationsModel {
             PollinationsModel::Custom(s) => {
                 match s.as_str() {
                     "llama-fast-roblox" => "Llama Fast Roblox",
-                    "llama-roblox" => "Llama Roblox", 
-                    "mistral" => "Mistral",
+                    "llama-roblox" => "Llama Roblox",
                     "openai" => "OpenAI GPT-4",
+                    "mistral" => "Mistral",
                     _ => s.as_str(),
                 }
             }
@@ -62,12 +62,14 @@ pub struct PollinationsClient {
 
 impl PollinationsClient {
     pub fn new(api_key: String, referrer: String) -> Self {
-        // Optimized HTTP client for faster responses (HTTP/1.1 for compatibility)
+        // Ultra-fast HTTP client configuration for maximum speed
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(15))  // Reasonable timeout
-            .connect_timeout(std::time::Duration::from_secs(5))  // Fast connection
-            .tcp_keepalive(std::time::Duration::from_secs(60))
-            .http1_only()  // Use HTTP/1.1 for better compatibility with Pollinations API
+            .timeout(std::time::Duration::from_secs(8))   // Much faster timeout
+            .connect_timeout(std::time::Duration::from_secs(1))  // Ultra-fast connection
+            .tcp_keepalive(std::time::Duration::from_secs(10))
+            .pool_idle_timeout(std::time::Duration::from_secs(5))
+            .pool_max_idle_per_host(20)  // More connections for speed
+            .http2_keep_alive_interval(std::time::Duration::from_secs(5))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
             
@@ -155,12 +157,21 @@ Provide a confident, direct, and authentic answer that demonstrates your qualifi
             "temperature": 0.7
         });
         
+        // Add referrer to payload for seed tier access
+        let referrer = std::env::var("POLLINATIONS_REFERER")
+            .unwrap_or_else(|_| "mockmate".to_string());
+        let mut final_payload = payload;
+        if !referrer.is_empty() {
+            final_payload["referrer"] = serde_json::Value::String(referrer.clone());
+        }
+
         let response = self
             .client
             .post(base_url)
             .header("Content-Type", "application/json")
             .header("User-Agent", "MockMate/1.0")
-            .json(&payload)
+            .header("Referer", referrer.as_str())  // Add referrer header for seed tier
+            .json(&final_payload)
             .send()
             .await?;
 
@@ -215,8 +226,8 @@ Provide a confident, direct, and authentic answer that demonstrates your qualifi
             .append_pair("model", model.as_str())
             .append_pair("private", "true")
             .append_pair("referrer", "mockmate")
-            .append_pair("temperature", "0.3")  // Lower temperature for faster responses
-            .append_pair("max_tokens", "400");  // Limit tokens for speed
+            .append_pair("temperature", "0.1")  // Ultra-low temperature for maximum speed
+            .append_pair("max_tokens", "80");   // Ultra-small for lightning speed
 
         info!("Pollinations text request URL: {}", url.as_str().chars().take(200).collect::<String>() + "...");
         
@@ -225,6 +236,7 @@ Provide a confident, direct, and authentic answer that demonstrates your qualifi
             .get(url)
             .header("User-Agent", "MockMate/1.0")
             .header("Accept", "text/plain")
+            .header("Referer", "mockmate")  // Add referrer header for seed tier
             .send()
             .await?;
 
@@ -342,11 +354,11 @@ Provide only the JSON response, no other text.",
             "messages": messages,
             "stream": true,
             "private": true,
-            "temperature": 0.3,  // Lower temperature for faster, more focused responses
-            "max_tokens": 500,   // Reduced for faster responses
-            "top_p": 0.9,        // Optimize sampling for speed
-            "presence_penalty": 0.1,
-            "frequency_penalty": 0.1
+            "temperature": 0.1,  // Ultra-low temperature for maximum speed
+            "max_tokens": 150,   // Much smaller for ultra-fast responses
+            "top_p": 0.7,        // Very focused sampling for speed
+            "presence_penalty": 0.0,
+            "frequency_penalty": 0.0
         });
 
         // Add referrer to payload if available
@@ -604,124 +616,15 @@ Provide only the JSON response, no other text.",
     }
 
     fn build_system_prompt(&self, context: &super::openai::InterviewContext) -> String {
-        let mut prompt = String::new();
+        // Ultra-minimal prompt for maximum speed
+        let mut prompt = String::from("Direct answers only. 1 sentence max.");
         
-        // Core role and personality - ULTRA FOCUSED for interview speed
-        prompt.push_str("You are an expert interview answer generator. Provide DIRECT, CONCISE answers that immediately address the question. NO fluff, NO introductory phrases, NO excessive context. Get straight to the point.");
-        
-        // Personalized greeting if user name is available
-        if let Some(user_name) = &context.user_name {
-            prompt.push_str(&format!("\n\nYou are specifically assisting {}.", user_name.trim()));
-        }
-        
-        // Interview context section
-        prompt.push_str("\n\n=== INTERVIEW CONTEXT ===");
-        
-        if let Some(company) = &context.company {
-            prompt.push_str(&format!("\nTarget Company: {}", company));
-            prompt.push_str(&format!("\n• Tailor your responses to align with {}'s values, culture, and industry reputation", company));
-            prompt.push_str(&format!("\n• Reference {}'s known projects, initiatives, or business model when relevant", company));
-        }
-        
+        // Only add the most essential context
         if let Some(position) = &context.position {
-            prompt.push_str(&format!("\nRole: {}", position));
-            prompt.push_str(&format!("\n• Focus on skills and experiences directly relevant to {} responsibilities", position));
-            prompt.push_str(&format!("\n• Demonstrate understanding of what success looks like in this {} role", position));
-        }
-        
-        // Difficulty and experience level customization
-        if let Some(difficulty) = &context.difficulty_level {
-            match difficulty.to_lowercase().as_str() {
-                "entry" | "junior" | "beginner" => {
-                    prompt.push_str("\nExperience Level: Entry-Level/Junior");
-                    prompt.push_str("\n• Emphasize learning agility, academic projects, internships, and personal projects");
-                    prompt.push_str("\n• Show enthusiasm and coachability rather than extensive experience");
-                    prompt.push_str("\n• Highlight transferable skills and potential for growth");
-                }
-                "mid" | "intermediate" | "medium" => {
-                    prompt.push_str("\nExperience Level: Mid-Level");
-                    prompt.push_str("\n• Balance proven experience with continued learning and growth mindset");
-                    prompt.push_str("\n• Demonstrate leadership potential and cross-functional collaboration");
-                    prompt.push_str("\n• Show progression in responsibilities and impact");
-                }
-                "senior" | "advanced" | "high" => {
-                    prompt.push_str("\nExperience Level: Senior-Level");
-                    prompt.push_str("\n• Emphasize strategic thinking, team leadership, and business impact");
-                    prompt.push_str("\n• Demonstrate ability to mentor others and drive organizational change");
-                    prompt.push_str("\n• Focus on scalable solutions and long-term vision");
-                }
-                _ => {
-                    prompt.push_str(&format!("\nDifficulty Level: {}", difficulty));
-                }
+            if !position.is_empty() {
+                prompt.push_str(&format!(" Role: {}.", position));
             }
         }
-        
-        if let Some(session_type) = &context.session_type {
-            prompt.push_str(&format!("\nInterview Type: {}", session_type));
-            match session_type.to_lowercase().as_str() {
-                "behavioral" => {
-                    prompt.push_str("\n• Use STAR method (Situation, Task, Action, Result) for storytelling");
-                    prompt.push_str("\n• Focus on specific examples that demonstrate soft skills and cultural fit");
-                }
-                "technical" => {
-                    prompt.push_str("\n• Provide clear, logical explanations with step-by-step reasoning");
-                    prompt.push_str("\n• Consider trade-offs, edge cases, and scalability when relevant");
-                }
-                "case" | "case study" => {
-                    prompt.push_str("\n• Structure responses with clear problem-solving frameworks");
-                    prompt.push_str("\n• Ask clarifying questions and state assumptions explicitly");
-                }
-                _ => {}
-            }
-        }
-        
-        if let Some(job_description) = &context.job_description {
-            if !job_description.is_empty() {
-                let job_desc_summary = if job_description.len() > 300 {
-                    format!("{}...", &job_description[..300])
-                } else {
-                    job_description.clone()
-                };
-                prompt.push_str(&format!("\n\nJob Description Summary: {}", job_desc_summary));
-                prompt.push_str("\n• Align your responses with the specific requirements and qualifications mentioned");
-            }
-        }
-        
-        // Resume context if available
-        if let Some(resume) = &context.resume_content {
-            if !resume.is_empty() {
-                prompt.push_str("\n\n=== CANDIDATE BACKGROUND ===\n");
-                let resume_summary = if resume.len() > 500 {
-                    format!("{}...", &resume[..500])
-                } else {
-                    resume.clone()
-                };
-                prompt.push_str(&format!("Resume Summary: {}", resume_summary));
-                prompt.push_str("\n• Draw from this background to provide authentic, personalized responses");
-                prompt.push_str("\n• Reference specific experiences, skills, and achievements when relevant");
-            }
-        }
-        
-        // ULTRA-FOCUSED Response Guidelines for Interview Speed
-        prompt.push_str("\n\n=== INTERVIEW SPEED GUIDELINES (CRITICAL) ===");
-        prompt.push_str("\n\n⚡ SPEED & DIRECTNESS:");
-        prompt.push_str("\n• Answer the exact question asked - NO tangents or background information");
-        prompt.push_str("\n• Start with the answer immediately - NO \"Well,\" \"So,\" or \"That's a great question\"");
-        prompt.push_str("\n• Maximum 2-3 sentences for most answers");
-        prompt.push_str("\n• Use first person (\"I\") and be specific");
-        
-        prompt.push_str("\n\n🎯 CONTENT FOCUS:");
-        prompt.push_str("\n• ONE clear example or point per answer");
-        prompt.push_str("\n• Include numbers/metrics when relevant");
-        prompt.push_str("\n• NO generic advice or explanations");
-        prompt.push_str("\n• NO \"this depends\" or \"it varies\" responses");
-        
-        prompt.push_str("\n\n🚀 INTERVIEW FORMAT:");
-        prompt.push_str("\n• Technical: Give the solution/approach directly");
-        prompt.push_str("\n• Behavioral: Quick STAR - Situation + Result (skip lengthy Task/Action)");
-        prompt.push_str("\n• Experience: State what you've done, not what you could do");
-        
-        prompt.push_str("\n\nCRITICAL: This is for LIVE INTERVIEW assistance. Responses must be fast, direct, and immediately usable. NO verbose explanations or context.");
         
         prompt
     }
@@ -776,9 +679,9 @@ Provide only the JSON response, no other text.",
         let system_prompt = self.build_system_prompt(context);
         let prompt = format!("{}
 
-Interview Question: {}
+Q: {}
 
-Provide a direct, concise answer. Maximum 2-3 sentences. Start immediately with the answer.", system_prompt, question);
+A:", system_prompt, question);
 
         info!("Generating streaming answer with Pollinations model: {}", model.as_str());
         
@@ -788,11 +691,11 @@ Provide a direct, concise answer. Maximum 2-3 sentences. Start immediately with 
         let referrer = std::env::var("POLLINATIONS_REFERER")
             .unwrap_or_else(|_| "mockmate".to_string());
 
-        // Use POST method to avoid URL length issues
+        // Ultra-minimal messages for maximum speed
         let messages = vec![
             serde_json::json!({
                 "role": "system",
-                "content": "You are a helpful AI assistant providing direct interview answers."
+                "content": "Give direct answers fast."
             }),
             serde_json::json!({
                 "role": "user",
@@ -805,22 +708,29 @@ Provide a direct, concise answer. Maximum 2-3 sentences. Start immediately with 
             "messages": messages,
             "stream": true,
             "private": true,
-            "temperature": 0.3,
-            "max_tokens": 400,
-            "top_p": 0.9,
-            "presence_penalty": 0.1,
-            "frequency_penalty": 0.1
+            "temperature": 0.1,  // Ultra-low temperature for maximum speed
+            "max_tokens": 100,   // Ultra-small for lightning-fast responses
+            "top_p": 0.6,        // Very focused sampling for speed
+            "presence_penalty": 0.0,
+            "frequency_penalty": 0.0
         });
 
         let url = format!("{}/openai", self.base_url);
         info!("Pollinations streaming POST request to: {}", url);
         
+        // Add referrer to payload for seed tier access
+        let mut final_payload = payload;
+        if !referrer.is_empty() {
+            final_payload["referrer"] = serde_json::Value::String(referrer.clone());
+        }
+
         let mut request_builder = self.client.post(&url)
             .header("Content-Type", "application/json")
             .header("User-Agent", "MockMate/1.0")
             .header("Accept", "text/event-stream")
             .header("Cache-Control", "no-cache")
-            .json(&payload);
+            .header("Referer", referrer.as_str())  // Add referrer header for seed tier
+            .json(&final_payload);
 
         // Add Bearer token if available
         if !api_key.is_empty() {
@@ -858,15 +768,9 @@ Provide a direct, concise answer. Maximum 2-3 sentences. Start immediately with 
                             }
                             
                             if !content.is_empty() {
-                                // 🔍 DEBUG: Log exact content being processed
-                                info!("🔍 POLLINATIONS DEBUG: SSE parsed content: '{}' (length: {})", 
-                                    content.replace('\n', "\\n").replace('\r', "\\r"), content.len());
-                                
                                 // Send individual token for progressive display
                                 on_token(&content);
                                 full_response.push_str(&content);
-                                info!("📤 POLLINATIONS: Sent token to callback: '{}', token length: {}, total length: {}", 
-                                    content.chars().take(50).collect::<String>(), content.len(), full_response.len());
                             }
                         }
                     }
@@ -1128,12 +1032,12 @@ Provide a direct, concise answer. Maximum 2-3 sentences. Start immediately with 
     }
     
     fn get_fallback_models(&self) -> Result<Vec<PollinationsModel>> {
-        info!("Using fallback models list");
+        info!("Using fallback models list (seed tier with referrer)");
         let models = vec![
             PollinationsModel::Custom("llama-fast-roblox".to_string()),
             PollinationsModel::Custom("llama-roblox".to_string()),
-            PollinationsModel::Custom("mistral".to_string()),
             PollinationsModel::Custom("openai".to_string()),
+            PollinationsModel::Custom("mistral".to_string()),
         ];
         Ok(models)
     }
