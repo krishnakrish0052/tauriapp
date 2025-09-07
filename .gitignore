@@ -6,11 +6,47 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+
+# Environment files
 .env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Dependencies
 node_modules
 
+# Build outputs
+dist
 dist-ssr
+build
 *.local
+
+# Test files
+test-*.html
+test-*.js
+
+# Database files
+*.sql
+*.db
+*.sqlite
+
+# Certificates and keys
+*.pfx
+*.pem
+*.key
+*.crt
+
+# PowerShell scripts (if not needed in repo)
+*.ps1
+
+# Temporary files and folders
+temp/
+tmp/
+docs/
+*.tmp
+*.temp
 
 # Editor directories and files
 .vscode/*
@@ -23,6 +59,19 @@ dist-ssr
 *.sln
 *.sw?
 
+# OS generated files
+Thumbs.db
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# Rust/Tauri artifacts
+src-tauri/target/
+src-tauri/Cargo.lock
+
 # Crush artifacts
 .crush/
-src-tauri\recordings
+src-tauri/recordings
