@@ -62,12 +62,12 @@ pub struct PollinationsClient {
 
 impl PollinationsClient {
     pub fn new(api_key: String, referrer: String) -> Self {
-        // Optimized HTTP client for faster responses
+        // Optimized HTTP client for faster responses (HTTP/1.1 for compatibility)
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(15))  // Reasonable timeout
             .connect_timeout(std::time::Duration::from_secs(5))  // Fast connection
             .tcp_keepalive(std::time::Duration::from_secs(60))
-            .http2_prior_knowledge()  // Use HTTP/2 for better performance
+            .http1_only()  // Use HTTP/1.1 for better compatibility with Pollinations API
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
             
@@ -737,6 +737,42 @@ Provide only the JSON response, no other text.",
     where
         F: FnMut(&str) + Send,
     {
+        // Try different endpoints for better reliability
+        let endpoints = vec![
+            "https://text.pollinations.ai/openai",
+            "https://text.pollinations.ai",
+        ];
+        
+        let mut last_error = None;
+        
+        for endpoint in endpoints {
+            match self.try_streaming_with_endpoint(endpoint, question, context, &model, &mut on_token).await {
+                Ok(result) => {
+                    info!("✅ Streaming succeeded with endpoint: {}", endpoint);
+                    return Ok(result);
+                }
+                Err(e) => {
+                    error!("❌ Streaming failed with endpoint {}: {}", endpoint, e);
+                    last_error = Some(e);
+                }
+            }
+        }
+        
+        // If all endpoints fail, return the last error
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("All streaming endpoints failed")))
+    }
+
+    async fn try_streaming_with_endpoint<F>(
+        &self,
+        base_url: &str,
+        question: &str,
+        context: &super::openai::InterviewContext,
+        model: &PollinationsModel,
+        on_token: &mut F,
+    ) -> Result<String>
+    where
+        F: FnMut(&str) + Send,
+    {
         let system_prompt = self.build_system_prompt(context);
         let prompt = format!("{}
 
@@ -752,19 +788,39 @@ Provide a direct, concise answer. Maximum 2-3 sentences. Start immediately with 
         let referrer = std::env::var("POLLINATIONS_REFERER")
             .unwrap_or_else(|_| "mockmate".to_string());
 
-        // Build URL with streaming enabled
-        let encoded_prompt = urlencoding::encode(&prompt);
-        let url = format!(
-            "{}/{}?model={}&stream=true&private=true&referrer={}&temperature=0.3&max_tokens=400&top_p=0.9",
-            self.base_url, encoded_prompt, model.as_str(), referrer
-        );
+        // Use POST method to avoid URL length issues
+        let messages = vec![
+            serde_json::json!({
+                "role": "system",
+                "content": "You are a helpful AI assistant providing direct interview answers."
+            }),
+            serde_json::json!({
+                "role": "user",
+                "content": prompt
+            })
+        ];
 
-        info!("Pollinations streaming request URL: {}", url);
+        let payload = serde_json::json!({
+            "model": model.as_str(),
+            "messages": messages,
+            "stream": true,
+            "private": true,
+            "temperature": 0.3,
+            "max_tokens": 400,
+            "top_p": 0.9,
+            "presence_penalty": 0.1,
+            "frequency_penalty": 0.1
+        });
+
+        let url = format!("{}/openai", self.base_url);
+        info!("Pollinations streaming POST request to: {}", url);
         
-        let mut request_builder = self.client.get(&url)
+        let mut request_builder = self.client.post(&url)
+            .header("Content-Type", "application/json")
             .header("User-Agent", "MockMate/1.0")
             .header("Accept", "text/event-stream")
-            .header("Cache-Control", "no-cache");
+            .header("Cache-Control", "no-cache")
+            .json(&payload);
 
         // Add Bearer token if available
         if !api_key.is_empty() {

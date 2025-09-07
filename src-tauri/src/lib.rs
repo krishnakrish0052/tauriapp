@@ -664,22 +664,49 @@ async fn pollinations_generate_answer_streaming(
         Err(e) => {
             error!("❌ Streaming failed: {}", e);
             
-            // Emit error event
-            let _ = app_handle.emit("ai-stream-error", e.to_string());
-            
-            // Send error signal
-            let data = AiResponseData {
-                message_type: "error".to_string(),
-                text: None,
-                error: Some(e.to_string()),
-            };
-            let app_handle_for_error = app_handle.clone();
-            tokio::spawn(async move {
-                if let Err(send_err) = send_ai_response_data(app_handle_for_error, data).await {
-                    error!("Failed to send error signal to UI: {}", send_err);
+            // Try non-streaming fallback
+            info!("🔄 Attempting non-streaming fallback...");
+            match client.generate_answer(&payload.question, &context, model).await {
+                Ok(fallback_response) => {
+                    info!("✅ Non-streaming fallback succeeded: {} chars", fallback_response.len());
+                    
+                    // Send the fallback response
+                    let data = AiResponseData {
+                        message_type: "complete".to_string(),
+                        text: Some(fallback_response.clone()),
+                        error: None,
+                    };
+                    let app_handle_fallback = app_handle.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = send_ai_response_data(app_handle_fallback, data).await {
+                            error!("Failed to send fallback response to UI: {}", e);
+                        }
+                    });
+                    
+                    let _ = app_handle.emit("ai-stream-complete", fallback_response.clone());
+                    Ok(fallback_response)
                 }
-            });
-            Err(e.to_string())
+                Err(fallback_err) => {
+                    error!("❌ Non-streaming fallback also failed: {}", fallback_err);
+                    
+                    // Send error signal for both failures
+                    let error_message = format!("Streaming failed: {}. Fallback failed: {}", e, fallback_err);
+                    let _ = app_handle.emit("ai-stream-error", error_message.clone());
+                    
+                    let data = AiResponseData {
+                        message_type: "error".to_string(),
+                        text: None,
+                        error: Some(error_message.clone()),
+                    };
+                    let app_handle_for_error = app_handle.clone();
+                    tokio::spawn(async move {
+                        if let Err(send_err) = send_ai_response_data(app_handle_for_error, data).await {
+                            error!("Failed to send error signal to UI: {}", send_err);
+                        }
+                    });
+                    Err(error_message)
+                }
+            }
         }
     }
 }
