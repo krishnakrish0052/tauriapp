@@ -165,7 +165,7 @@ export const AIResponseWindow: React.FC<AIResponseWindowProps> = ({
       <div className="p-3">
         <div 
           ref={contentRef}
-          className="text-white text-sm leading-relaxed whitespace-pre-wrap max-h-80 overflow-y-auto scrollbar-thin scrollbar-track-white/10 scrollbar-thumb-white/30"
+          className="text-white text-sm leading-relaxed whitespace-pre-wrap max-h-96 overflow-y-auto scrollbar-thin scrollbar-track-white/10 scrollbar-thumb-white/30"
           style={{
             minHeight: content.trim() ? 'auto' : '60px',
             fontFamily: 'system-ui, -apple-system, sans-serif'

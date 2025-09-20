@@ -1,9 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useResponsiveWindow } from '@/hooks/useResponsiveWindow';
+import NotificationDialog from '@/components/NotificationDialog';
+import './styles/streaming.css';
 // Using Material Icons instead of lucide-react to avoid antivirus issues
 
 type AppScreen = 'session_connection' | 'main' | 'confirmation';
@@ -64,10 +66,18 @@ interface AppState {
   aiResponseVisible: boolean;
   aiResponseContent: string;
   aiResponseStreaming: boolean;
+  
+  // Notification system
+  notification: {
+    isOpen: boolean;
+    title: string;
+    message: string;
+  };
 }
 
 function App() {
   const { autoResize } = useResponsiveWindow();
+  const [windowHeight, setWindowHeight] = useState(400);
   
   const [state, setState] = useState<AppState>({
     currentScreen: 'session_connection',
@@ -91,7 +101,7 @@ function App() {
       startTime: 0,
     },
     isStartingSession: false,
-    selectedModel: 'llama-fast-roblox', // Use fast Llama model as default with seed tier referrer
+    selectedModel: 'roblox-rp', // Use Llama 3.1 8B Instruct as default for best performance
     selectedProvider: 'pollinations',
     isModelDropdownOpen: false,
     availableModels: [], // Start with empty array, will be populated from backend
@@ -102,6 +112,12 @@ function App() {
     aiResponseVisible: false,
     aiResponseContent: '',
     aiResponseStreaming: false,
+    // Notification system
+    notification: {
+      isOpen: false,
+      title: '',
+      message: '',
+    },
   });
 
   
@@ -110,6 +126,23 @@ function App() {
   
   // Timer ref for cleanup
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Performance metrics tracking for streaming
+  const streamingMetricsRef = useRef<{
+    streamStartTime: number;
+    firstTokenTime: number;
+    totalTokens: number;
+    lastTokenTime: number;
+    renderLatencies: number[];
+    batchCount: number;
+  }>({
+    streamStartTime: 0,
+    firstTokenTime: 0,
+    totalTokens: 0,
+    lastTokenTime: 0,
+    renderLatencies: [],
+    batchCount: 0
+  });
   
   // Update state ref whenever state changes
   useEffect(() => {
@@ -200,15 +233,14 @@ function App() {
         console.error('❌ Failed to fetch models from backend:', error);
         // Set fallback models if backend fetch fails
         const fallbackModels = [
-          { id: 'llama-fast-roblox', name: 'Llama Fast Roblox', provider: 'pollinations' },
-          { id: 'llama-roblox', name: 'Llama Roblox', provider: 'pollinations' },
-          { id: 'openai', name: 'OpenAI GPT-4', provider: 'pollinations' },
-          { id: 'mistral', name: 'Mistral', provider: 'pollinations' },
+          { id: 'roblox-rp', name: 'Llama 3.1 8B Instruct (Cross-Region Bedrock)', provider: 'pollinations' },
+          { id: 'gemini', name: 'Gemini 2.5 Flash Lite (api.navy)', provider: 'pollinations' },
+          { id: 'mistral', name: 'Mistral Small 3.1 24B', provider: 'pollinations' },
         ];
         setState(prev => ({
           ...prev,
           availableModels: fallbackModels,
-          selectedModel: 'llama-fast-roblox' // Fast model with seed tier referrer
+          selectedModel: 'roblox-rp' // Use Llama 3.1 8B Instruct as default
         }));
         console.log('🔧 Using fallback models due to backend fetch error');
       }
@@ -287,6 +319,115 @@ function App() {
     }
   }, [state.fullTranscription, state.interimTranscription]);
 
+  // Performance optimization: Token batching for high-frequency streaming updates
+  const tokenBatchRef = useRef<{
+    content: string;
+    timeout: NodeJS.Timeout | null;
+    batchStartTime: number;
+    tokenCount: number;
+  }>({
+    content: '',
+    timeout: null,
+    batchStartTime: 0,
+    tokenCount: 0
+  });
+
+  const processBatchedTokens = useCallback(() => {
+    if (tokenBatchRef.current.content) {
+      const batch = tokenBatchRef.current;
+      const batchDuration = Date.now() - batch.batchStartTime;
+      const metrics = streamingMetricsRef.current;
+      
+      // Track performance metrics
+      metrics.batchCount++;
+      metrics.renderLatencies.push(batchDuration);
+      metrics.lastTokenTime = Date.now();
+      
+      // Occasional performance logging (every 10th batch)
+      if (metrics.batchCount % 10 === 0) {
+        const avgLatency = metrics.renderLatencies.slice(-10).reduce((a, b) => a + b, 0) / Math.min(10, metrics.renderLatencies.length);
+        const tokensPerSecond = metrics.totalTokens > 0 ? (metrics.totalTokens / ((Date.now() - metrics.streamStartTime) / 1000)) : 0;
+        console.log(`⚡ Streaming performance: ${tokensPerSecond.toFixed(1)} tokens/sec, ${avgLatency.toFixed(1)}ms avg latency`);
+      }
+      
+      const renderStartTime = Date.now();
+      setState(prev => ({
+        ...prev,
+        accumulatedAIResponse: batch.content,
+        aiResponseContent: batch.content
+      }));
+      
+      // Track render completion time
+      const renderTime = Date.now() - renderStartTime;
+      if (renderTime > 1) { // Only log if render takes more than 1ms
+        console.log(`🖼️ React render took ${renderTime}ms`);
+      }
+      
+      // Reset batch
+      tokenBatchRef.current = {
+        content: '',
+        timeout: null,
+        batchStartTime: 0,
+        tokenCount: 0
+      };
+    }
+  }, []);
+
+  const addTokenToBatch = useCallback((token: string) => {
+    const batch = tokenBatchRef.current;
+    const metrics = streamingMetricsRef.current;
+    
+    // Track first token timing
+    if (metrics.totalTokens === 0 && metrics.streamStartTime > 0) {
+      metrics.firstTokenTime = Date.now();
+      const timeToFirstToken = metrics.firstTokenTime - metrics.streamStartTime;
+      console.log(`⚡ Time to first token: ${timeToFirstToken}ms`);
+    }
+    
+    // Initialize batch if needed
+    if (batch.tokenCount === 0) {
+      batch.batchStartTime = Date.now();
+      batch.content = state.accumulatedAIResponse || '';
+    }
+    
+    // Add token to batch
+    batch.content += token;
+    batch.tokenCount++;
+    metrics.totalTokens++;
+    
+    // For single tokens or whitespace, display immediately for better streaming effect
+    if (token.trim().length <= 3 || /\s/.test(token)) {
+      // Clear existing timeout and process immediately
+      if (batch.timeout) {
+        clearTimeout(batch.timeout);
+        batch.timeout = null;
+      }
+      processBatchedTokens();
+    } else {
+      // Clear existing timeout
+      if (batch.timeout) {
+        clearTimeout(batch.timeout);
+      }
+      
+      // Set new timeout - batch for 5ms for visible word-by-word streaming
+      batch.timeout = setTimeout(() => {
+        processBatchedTokens();
+      }, 5);
+    }
+    
+  }, [processBatchedTokens, state.accumulatedAIResponse]);
+
+  // Cleanup token batching on unmount
+  useEffect(() => {
+    return () => {
+      const batch = tokenBatchRef.current;
+      if (batch.timeout) {
+        clearTimeout(batch.timeout);
+        batch.timeout = null;
+      }
+    };
+  }, []);
+
   // Set up AI streaming event listeners
   useEffect(() => {
     let unlistenAIStart: (() => void) | null = null;
@@ -299,6 +440,17 @@ function App() {
         // Listen for AI streaming start
         unlistenAIStart = await listen('ai-stream-start', (_event: any) => {
           console.log('AI streaming started - response will show in embedded window');
+          
+          // Initialize streaming performance metrics
+          streamingMetricsRef.current = {
+            streamStartTime: Date.now(),
+            firstTokenTime: 0,
+            totalTokens: 0,
+            lastTokenTime: 0,
+            renderLatencies: [],
+            batchCount: 0
+          };
+          
           setState(prev => ({ 
             ...prev, 
             isStreaming: true, 
@@ -310,18 +462,19 @@ function App() {
           }));
         });
 
-        // Listen for AI streaming tokens
+        // Listen for AI streaming tokens with optimized batching
         unlistenAIToken = await listen('ai-stream-token', (event: any) => {
-          const token = event.payload.token || event.payload.text || event.payload;
-          console.log('AI stream token received (displaying in embedded window):', token);
+          // Backend emits structured token payload
+          const token = event.payload.text || event.payload.token || event.payload;
           
-          // Accumulate response text for database saving and embedded display
+          // Optimize: minimal console logging for better performance
+          if (token && token.length <= 5 && Math.random() < 0.1) {
+            console.log('AI token sample:', token);
+          }
+          
+          // Use optimized token batching for smooth performance
           if (token && typeof token === 'string') {
-            setState(prev => ({ 
-              ...prev, 
-              accumulatedAIResponse: prev.accumulatedAIResponse + token,
-              aiResponseContent: prev.aiResponseContent + token
-            }));
+            addTokenToBatch(token);
           }
         });
 
@@ -330,6 +483,25 @@ function App() {
           console.log('🎉 AI streaming completed:', event.payload);
           console.log('🔍 Backend completion event payload type:', typeof event.payload);
           console.log('🔍 Backend completion event payload content:', event.payload);
+          
+          // Log final streaming performance metrics
+          const metrics = streamingMetricsRef.current;
+          if (metrics.streamStartTime > 0) {
+            const totalTime = Date.now() - metrics.streamStartTime;
+            const avgLatency = metrics.renderLatencies.length > 0 ? 
+              metrics.renderLatencies.reduce((a, b) => a + b, 0) / metrics.renderLatencies.length : 0;
+            const tokensPerSecond = metrics.totalTokens > 0 ? (metrics.totalTokens / (totalTime / 1000)) : 0;
+            
+            console.log(`📊 Final streaming metrics:`);
+            console.log(`  ⏱️ Total time: ${totalTime}ms`);
+            console.log(`  🔥 Tokens processed: ${metrics.totalTokens}`);
+            console.log(`  ⚡ Tokens/second: ${tokensPerSecond.toFixed(1)}`);
+            console.log(`  🖼️ Avg render latency: ${avgLatency.toFixed(1)}ms`);
+            console.log(`  📦 Batches processed: ${metrics.batchCount}`);
+            if (metrics.firstTokenTime > 0) {
+              console.log(`  ⚡ Time to first token: ${metrics.firstTokenTime - metrics.streamStartTime}ms`);
+            }
+          }
           
           // Save answer to database if we have a current question ID
           const saveAnswer = async () => {
@@ -421,6 +593,41 @@ function App() {
     };
   }, []);
 
+  // Track window height for responsive notifications
+  useEffect(() => {
+    const updateWindowHeight = () => {
+      setWindowHeight(window.innerHeight);
+    };
+    
+    updateWindowHeight(); // Initial height
+    window.addEventListener('resize', updateWindowHeight);
+    
+    return () => window.removeEventListener('resize', updateWindowHeight);
+  }, []);
+
+  // Notification functions
+  const showNotification = (title: string, message: string) => {
+    setState(prev => ({
+      ...prev,
+      notification: {
+        isOpen: true,
+        title,
+        message,
+      },
+    }));
+  };
+
+  const closeNotification = () => {
+    setState(prev => ({
+      ...prev,
+      notification: {
+        isOpen: false,
+        title: '',
+        message: '',
+      },
+    }));
+  };
+
   // Model selection functions
   const toggleModelDropdown = () => {
     setState(prev => ({ ...prev, isModelDropdownOpen: !prev.isModelDropdownOpen }));
@@ -456,6 +663,44 @@ function App() {
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [state.isModelDropdownOpen]);
+
+  // Disable right-click context menu globally
+  useEffect(() => {
+    const disableContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      return false;
+    };
+
+    const disableSelection = (e: Event) => {
+      e.preventDefault();
+      return false;
+    };
+
+    const disableRightClick = (e: KeyboardEvent) => {
+      // Disable F12, Ctrl+Shift+I, Ctrl+U, etc.
+      if ((e.ctrlKey && e.shiftKey && e.keyCode === 73) || // Ctrl+Shift+I
+          (e.ctrlKey && e.shiftKey && e.keyCode === 74) || // Ctrl+Shift+J
+          (e.ctrlKey && e.keyCode === 85) ||               // Ctrl+U
+          (e.keyCode === 123)) {                           // F12
+        e.preventDefault();
+        return false;
+      }
+    };
+
+    // Add event listeners
+    document.addEventListener('contextmenu', disableContextMenu);
+    document.addEventListener('keydown', disableRightClick);
+    document.addEventListener('selectstart', disableSelection);
+    document.addEventListener('dragstart', disableSelection);
+
+    // Cleanup on unmount
+    return () => {
+      document.removeEventListener('contextmenu', disableContextMenu);
+      document.removeEventListener('keydown', disableRightClick);
+      document.removeEventListener('selectstart', disableSelection);
+      document.removeEventListener('dragstart', disableSelection);
+    };
+  }, []);
 
   // Handle microphone toggle
   const toggleMicrophone = async () => {
@@ -572,7 +817,7 @@ function App() {
       await autoResize(false, 'main');
       
       // Show user-friendly error
-      alert(`Failed to send question: ${(error as Error).message || error}`);
+      showNotification('Send Error', `Failed to send question: ${(error as Error).message || error}`);
     }
   };
 
@@ -615,7 +860,7 @@ function App() {
     } catch (error) {
       console.error('Failed to connect to session:', error);
       // Show error to user
-      alert(`Failed to connect to session: ${error}`);
+      showNotification('Connection Error', `Failed to connect to session: ${error}`);
       setState(prev => ({ ...prev, isLoading: false }));
     }
   };
@@ -650,7 +895,7 @@ function App() {
       await autoResize(false, 'main');
     } catch (error) {
       console.error('Failed to start session:', error);
-      alert(`Failed to start session: ${error}`);
+      showNotification('Session Error', `Failed to start session: ${error}`);
       setState(prev => ({ ...prev, isStartingSession: false }));
     }
   };
@@ -789,7 +1034,7 @@ function App() {
       setState(prev => ({ ...prev, isLoading: false, isStreaming: false }));
       
       // Show user-friendly error
-      alert(`Failed to generate AI answer: ${(error as Error).message || error}`);
+      showNotification('AI Error', `Failed to generate AI answer: ${(error as Error).message || error}`);
     }
   };
 
@@ -813,8 +1058,17 @@ function App() {
       // Expand main window for screen analysis response
       await autoResize(true, 'main');
       
-      await invoke('analyze_screen_with_ai_streaming');
-      console.log('Screen analysis started...');
+      const payload = {
+        model: state.selectedModel,
+        provider: 'pollinations',
+        company: state.session?.companyName || null,
+        position: state.session?.jobTitle || null,
+        job_description: null,
+        system_prompt: null,
+      };
+      
+      await invoke('answer_screenshot_questions_streaming', { payload });
+      console.log('Screen Q&A started...');
     } catch (error) {
       console.error('Failed to analyze screen:', error);
       setState(prev => ({ ...prev, isLoading: false, isStreaming: false }));
@@ -822,6 +1076,7 @@ function App() {
       await autoResize(false, 'main');
     }
   };
+
 
 
   // Handle window controls
@@ -1036,7 +1291,7 @@ function App() {
                   {/* Dropdown Menu */}
                   {state.isModelDropdownOpen && (
                     <div className="absolute top-full left-0 mt-1 bg-black/90 backdrop-blur-sm border border-white/20 rounded shadow-lg z-50 min-w-[200px]">
-                      <div className="py-1 max-h-60 overflow-y-auto scrollbar-hide">
+                      <div className="py-1 max-h-80 overflow-y-auto scrollbar-thin">
                         {state.availableModels.map((model) => (
                           <button
                             key={model.id}
@@ -1167,12 +1422,12 @@ function App() {
               
               <Button 
                 onClick={analyzeScreen}
-                className="font-medium text-white bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 border-0 rounded transition-all duration-200 px-4 py-1 text-xs h-6 flex items-center gap-0.5 min-w-[180px]"
-                title="Analyze Screen Content"
+                className="font-medium text-white bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 border-0 rounded transition-all duration-200 px-4 py-1 text-xs h-6 flex items-center gap-0.5 min-w-[100px]"
+                title="Screenshot & Answer Questions"
                 disabled={state.isLoading}
               >
                 <span className="material-icons text-xs">screenshot_monitor</span>
-                <span className="text-xs">Screen</span>
+                <span className="text-xs">Q&A</span>
               </Button>
               
               {/* Input field - Takes remaining space */}
@@ -1211,6 +1466,15 @@ function App() {
       {state.currentScreen === 'session_connection' && renderSessionConnectionScreen()}
       {state.currentScreen === 'confirmation' && renderConfirmationScreen()}
       {state.currentScreen === 'main' && renderMainScreen()}
+      
+      {/* Responsive notification dialog */}
+      <NotificationDialog
+        isOpen={state.notification.isOpen}
+        title={state.notification.title}
+        message={state.notification.message}
+        onClose={closeNotification}
+        windowHeight={windowHeight}
+      />
     </div>
   );
 }

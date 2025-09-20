@@ -73,7 +73,6 @@
       "certificateThumbprint": "5436D3EC98DBD6D237F46484FABBF52414054C15",
       "digestAlgorithm": "sha256",
       "timestampUrl": "http://timestamp.sectigo.com",
-      "signCommand": "C:\\Program Files (x86)\\Windows Kits\\10\\App Certification Kit\\signtool.exe",
       "wix": {
         "language": "en-US"
       },

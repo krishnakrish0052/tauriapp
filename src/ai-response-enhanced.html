@@ -340,7 +340,7 @@
             </div>
             <div class="footer-item">
                 <span>📏</span>
-                <span id="windowSize">500px height</span>
+                <span id="windowSize">550px height</span>
             </div>
         </div>
     </div>
@@ -418,10 +418,12 @@
         function handleStreamToken(data) {
             console.log('🔤 Enhanced stream token:', data);
             
-            if (data && data.token) {
+            // Backend sends token in data.text for stream-token messages
+            const tokenText = data && (data.text || data.token);
+            if (tokenText) {
                 setStatus('streaming');
                 showLoading(false);
-                appendText(data.token);
+                appendText(tokenText);
                 updateStreamStatus(`Streaming... (${streamBuffer.length} chars)`);
             }
         }
@@ -473,13 +475,16 @@
             streamBuffer += text;
             currentContent += text;
             
-            // Enhanced text rendering with better formatting
-            const formattedText = formatText(currentContent);
-            responseText.innerHTML = formattedText + '<span class="stream-cursor"></span>';
-            
-            // Auto-scroll to bottom
-            const contentArea = document.getElementById('contentArea');
-            contentArea.scrollTop = contentArea.scrollHeight;
+            // Optimized streaming: Use requestAnimationFrame for smoother updates
+            requestAnimationFrame(() => {
+                // Enhanced text rendering with better formatting
+                const formattedText = formatText(currentContent);
+                responseText.innerHTML = formattedText + '<span class="stream-cursor"></span>';
+                
+                // Auto-scroll to bottom
+                const contentArea = document.getElementById('contentArea');
+                contentArea.scrollTop = contentArea.scrollHeight;
+            });
         }
 
         function setContent(text) {

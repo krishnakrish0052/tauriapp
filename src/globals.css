@@ -2,6 +2,31 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Disable right-click context menu globally */
+* {
+  -webkit-touch-callout: none; /* iOS Safari */
+  -webkit-user-select: none;   /* Safari */
+  -khtml-user-select: none;    /* Konqueror HTML */
+  -moz-user-select: none;      /* Firefox */
+  -ms-user-select: none;       /* Internet Explorer/Edge */
+  user-select: none;           /* Non-prefixed version, currently supported by Chrome and Opera */
+  -webkit-context-menu: none;  /* Disable context menu on WebKit */
+}
+
+/* Allow text selection for input fields and text areas */
+input, textarea, [contenteditable="true"] {
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+}
+
+/* Disable context menu for the entire document */
+html, body {
+  -webkit-context-menu: none;
+  -webkit-touch-callout: none;
+}
+
 @layer base {
   :root {
     /* MockMate Design System Variables */
@@ -73,6 +98,29 @@
   
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
+  }
+  
+  /* Custom thin scrollbar for model dropdown */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #4a5568 transparent;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: rgba(74, 85, 104, 0.5);
+    border-radius: 3px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(74, 85, 104, 0.8);
   }
 }
 

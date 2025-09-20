@@ -10,8 +10,8 @@ use parking_lot::Mutex;
 
 pub mod audio;
 mod websocket;
-mod openai;
-mod pollinations;
+pub mod openai;
+pub mod pollinations;
 mod wasapi_loopback;
 pub mod realtime_transcription;
 pub mod accessibility_reader; // Windows Accessibility API text reader
@@ -99,6 +99,9 @@ pub fn run() -> Result<()> {
             // Accessibility-based AI analysis commands
             analyze_applications_with_ai_streaming,
             analyze_focused_window_with_ai_streaming,
+            // Screenshot and vision analysis commands
+            capture_screenshot,
+            answer_screenshot_questions_streaming,
             // Session management commands (existing)
             connect_to_web_session,
             activate_web_session,
@@ -606,104 +609,129 @@ async fn pollinations_generate_answer_streaming(
     let result = client.generate_answer_streaming(
         &payload.question, 
         &context, 
-        model,
+        model_clone.clone(),
         move |token: &str| {
-            info!("📝 Streaming token: '{}' (length: {})", token.chars().take(50).collect::<String>(), token.len());
+            // Optimize: reduce logging for better streaming performance
+            if token.len() <= 20 {
+                info!("📝 Token: '{}' ({})", token.chars().take(10).collect::<String>(), token.len());
+            } else {
+                info!("📝 Token: {}chars", token.len());
+            }
             
-            // 🔍 DEBUG: Log the exact token being processed
-            info!("🔍 BACKEND TOKEN DEBUG: Raw token received: '{}' (length: {})", 
-                token.replace('\n', "\\n").replace('\r', "\\r"), token.len());
-            
-            // Emit token event for progressive display
-            let _ = app_handle_clone.emit("ai-stream-token", token);
-            info!("📡 BACKEND: Emitted 'ai-stream-token' event with token: '{}'", 
-                token.chars().take(50).collect::<String>());
-            
-            // Also send via direct window communication for immediate display
-            let data = AiResponseData {
-                message_type: "stream-token".to_string(),
-                text: Some(token.to_string()),
-                error: None,
-            };
-            let app_handle_for_async = app_handle_clone.clone();
-            tokio::spawn(async move {
-                info!("🔄 BACKEND: About to send stream-token to native window: '{}'", 
-                    data.text.as_ref().unwrap().chars().take(50).collect::<String>());
-                if let Err(e) = send_ai_response_data(app_handle_for_async, data).await {
-                    error!("Failed to send streaming token to UI: {}", e);
-                }
+            // Emit token event for progressive display with optimized payload
+            let token_payload = serde_json::json!({
+                "text": token,
+                "token": token,
+                "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
             });
+            if let Err(e) = app_handle_clone.emit("ai-stream-token", &token_payload) {
+                warn!("Failed to emit streaming token: {}", e);
+            }
         }
     ).await;
+    
+    // If Pollinations fails, try to fallback to non-streaming fallback or provide helpful error
+    let final_result = match result {
+        Ok(response) => Ok(response),
+        Err(pollinations_error) => {
+            let error_str = pollinations_error.to_string();
+            let is_infrastructure_issue = error_str.contains("HTTP 530") || 
+                error_str.contains("infrastructure issues") ||
+                error_str.contains("health check failed");
+            
+            warn!("Pollinations streaming failed: {} (infrastructure issue: {})", pollinations_error, is_infrastructure_issue);
+            
+            // Send helpful error message to UI
+            let error_message = if is_infrastructure_issue {
+                format!("❌ Pollinations service is temporarily unavailable due to infrastructure issues (HTTP 530 errors). This usually resolves within a few minutes.\n\n🔄 Suggestions:\n• Try again in 2-3 minutes\n• Switch to OpenAI in settings\n• Use the manual input mode\n\nTechnical details: {}", error_str)
+            } else {
+                format!("❌ Pollinations streaming failed: {}\n\n💡 Try switching to OpenAI or check your internet connection.", error_str)
+            };
+            
+            Err(error_message)
+        }
+    };
 
-    match result {
+    let elapsed_time = stream_start_time.elapsed();
+    
+    // Handle streaming result and send to UI
+    match final_result {
         Ok(full_response) => {
-            let elapsed_time = stream_start_time.elapsed();
-            info!("✅ Streaming completed. Full response length: {}, elapsed time: {:.2?}", full_response.len(), elapsed_time);
+            info!("✅ Pollinations streaming completed successfully in {:.2?}. Response length: {}", elapsed_time, full_response.len());
             
-            // Emit completion event
-            let _ = app_handle.emit("ai-stream-complete", full_response.clone());
+            // Check if response is empty and try fallback if needed
+            if full_response.trim().is_empty() {
+                warn!("Streaming returned empty response, trying non-streaming fallback...");
+                match client.generate_answer(&payload.question, &context, model_clone).await {
+                    Ok(fallback_response) => {
+                        info!("✅ Non-streaming fallback successful");
+                        let data = AiResponseData {
+                            message_type: "complete".to_string(),
+                            text: Some(fallback_response.clone()),
+                            error: None,
+                        };
+                        let app_handle_fallback_clone = app_handle.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = send_ai_response_data(app_handle_fallback_clone, data).await {
+                                error!("Failed to send fallback response: {}", e);
+                            }
+                        });
+                        let _ = app_handle.emit("ai-stream-complete", fallback_response.clone());
+                        return Ok(fallback_response);
+                    },
+                    Err(e) => {
+                        error!("❌ Non-streaming fallback also failed: {}", e);
+                        let error_msg = format!("Both streaming and fallback failed: {}", e);
+                        let data = AiResponseData {
+                            message_type: "error".to_string(),
+                            text: None,
+                            error: Some(error_msg.clone()),
+                        };
+                        let app_handle_error_clone = app_handle.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = send_ai_response_data(app_handle_error_clone, data).await {
+                                error!("Failed to send error: {}", e);
+                            }
+                        });
+                        return Err(error_msg);
+                    }
+                }
+            }
             
-            // Send completion signal
+            // Send successful completion signal
             let data = AiResponseData {
                 message_type: "complete".to_string(),
                 text: Some(full_response.clone()),
                 error: None,
             };
-            let app_handle_for_complete = app_handle.clone();
+            let app_handle_complete = app_handle.clone();
             tokio::spawn(async move {
-                if let Err(e) = send_ai_response_data(app_handle_for_complete, data).await {
+                if let Err(e) = send_ai_response_data(app_handle_complete, data).await {
                     error!("Failed to send completion signal to UI: {}", e);
                 }
             });
+            
+            let _ = app_handle.emit("ai-stream-complete", full_response.clone());
             Ok(full_response)
         },
-        Err(e) => {
-            error!("❌ Streaming failed: {}", e);
+        Err(error_message) => {
+            error!("❌ Pollinations streaming failed after {:.2?}: {}", elapsed_time, error_message);
             
-            // Try non-streaming fallback
-            info!("🔄 Attempting non-streaming fallback...");
-            match client.generate_answer(&payload.question, &context, model_clone).await {
-                Ok(fallback_response) => {
-                    info!("✅ Non-streaming fallback succeeded: {} chars", fallback_response.len());
-                    
-                    // Send the fallback response
-                    let data = AiResponseData {
-                        message_type: "complete".to_string(),
-                        text: Some(fallback_response.clone()),
-                        error: None,
-                    };
-                    let app_handle_fallback = app_handle.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = send_ai_response_data(app_handle_fallback, data).await {
-                            error!("Failed to send fallback response to UI: {}", e);
-                        }
-                    });
-                    
-                    let _ = app_handle.emit("ai-stream-complete", fallback_response.clone());
-                    Ok(fallback_response)
+            // Send error details to the UI with structured error data
+            let data = AiResponseData {
+                message_type: "error".to_string(),
+                text: None,
+                error: Some(error_message.clone()),
+            };
+            let app_handle_error = app_handle.clone();
+            tokio::spawn(async move {
+                if let Err(e) = send_ai_response_data(app_handle_error, data).await {
+                    error!("Failed to send error signal to UI: {}", e);
                 }
-                Err(fallback_err) => {
-                    error!("❌ Non-streaming fallback also failed: {}", fallback_err);
-                    
-                    // Send error signal for both failures
-                    let error_message = format!("Streaming failed: {}. Fallback failed: {}", e, fallback_err);
-                    let _ = app_handle.emit("ai-stream-error", error_message.clone());
-                    
-                    let data = AiResponseData {
-                        message_type: "error".to_string(),
-                        text: None,
-                        error: Some(error_message.clone()),
-                    };
-                    let app_handle_for_error = app_handle.clone();
-                    tokio::spawn(async move {
-                        if let Err(send_err) = send_ai_response_data(app_handle_for_error, data).await {
-                            error!("Failed to send error signal to UI: {}", send_err);
-                        }
-                    });
-                    Err(error_message)
-                }
-            }
+            });
+            
+            let _ = app_handle.emit("ai-stream-error", error_message.clone());
+            Err(error_message)
         }
     }
 }
@@ -773,8 +801,13 @@ async fn pollinations_generate_answer_post_streaming(
         move |token: &str| {
             info!("📝 Streaming token (POST): '{}' (length: {})", token.chars().take(50).collect::<String>(), token.len());
             
-            // Emit token event for progressive display
-            let _ = app_handle_clone.emit("ai-stream-token", token);
+            // Emit token event for progressive display with structured payload for frontend
+            let token_payload = serde_json::json!({
+                "text": token,
+                "token": token,
+                "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
+            });
+            let _ = app_handle_clone.emit("ai-stream-token", token_payload);
             
             // Also send via direct window communication for immediate display
             let data = AiResponseData {
@@ -939,22 +972,27 @@ async fn get_available_models(state: State<'_, AppState>) -> Result<Vec<ModelInf
         icon: "🤖".to_string(),
     });
     
-    // Pollinations models (fetched from API with headers)
+    // Pollinations models - only include verified working models
+    // Based on test results from test_pollinations_models.rs
+    const WORKING_MODELS: &[&str] = &[
+        "roblox-rp",    // Llama 3.1 8B Instruct (Cross-Region Bedrock) - our default
+        "gemini",       // Gemini 2.5 Flash Lite (api.navy)
+        "mistral",      // Mistral Small 3.1 24B
+    ];
+    
     if let Err(e) = state.ensure_pollinations_client() {
         warn!("Pollinations client not available: {}", e);
     } else {
-        let client = {
-            let guard = state.pollinations_client.lock();
-            guard.as_ref().unwrap().clone()
-        };
-        let pollinations_models = client.fetch_available_models().await.unwrap_or_default();
-        for model in pollinations_models {
-            models.push(ModelInfo {
-                id: model.as_str().to_string(),
-                name: model.display_name().to_string(),
-                provider: "pollinations".to_string(),
-                icon: "🧠".to_string(),
-            });
+        info!("Adding {} verified working Pollinations models", WORKING_MODELS.len());
+        for model_id in WORKING_MODELS {
+            if let Some(model) = pollinations::PollinationsModel::from_str(model_id) {
+                models.push(ModelInfo {
+                    id: model.as_str().to_string(),
+                    name: model.display_name().to_string(),
+                    provider: "pollinations".to_string(),
+                    icon: "🧠".to_string(),
+                });
+            }
         }
     }
     
@@ -1222,11 +1260,11 @@ fn create_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
           main_outer_size.width, main_outer_size.height);
     
     // Calculate AI response window size - SAME WIDTH as main window's INNER content
-    let max_height = 500u32; // Maximum height constraint
+    let max_height = 550u32; // Maximum height constraint
     
     // Use main window INNER width for exact content width match
     let ai_response_width = main_inner_size.width;
-    let ai_response_height = 500u32; // Fixed default height of 500px
+    let ai_response_height = 550u32; // Fixed default height of 550px
     
     info!("🔍 DEBUG: AI Response size calculated: {}x{} (SAME INNER WIDTH as main)", ai_response_width, ai_response_height);
     
@@ -1385,8 +1423,8 @@ fn resize_ai_response_window(app_handle: AppHandle, height: u32) -> Result<Strin
         
         info!("🔍 DEBUG (resize): Main outer size: {}x{}, AI width: {} (SAME WIDTH)", main_outer_size.width, main_outer_size.height, ai_response_width);
         
-        // Lower minimum height for auto-sizing content, max height 500px
-        let clamped_height = height.max(80).min(500); // Use 500px as max height for content-based sizing
+        // Lower minimum height for auto-sizing content, max height 550px
+        let clamped_height = height.max(80).min(550); // Use 550px as max height for content-based sizing
         let size_diff = (current_size.height as i32 - clamped_height as i32).abs();
         
         info!("📊 RESIZE DEBUG: current={}px, requested={}px, clamped={}px, max={}px, diff={}px", 
@@ -1464,27 +1502,26 @@ fn create_ai_response_window_at_startup(app_handle: AppHandle) -> Result<String,
           main_inner_size.width, main_inner_size.height);
     
     // Calculate AI response window size - SAME WIDTH as main window (startup)
-    let max_height = 500u32; // Maximum height constraint
+    let max_height = 550u32; // Maximum height constraint
     
     // Use main window outer width for exact width match
     let ai_response_width = main_outer_size.width;
-    let ai_response_height = max_height.min(500); // Default height 500px
+    let ai_response_height = max_height.min(550); // Default height 550px
     
     info!("🔍 DEBUG (startup): AI Response size calculated: {}x{} (SAME WIDTH as main)", ai_response_width, ai_response_height);
     
-    // Calculate position: CENTER X on screen, positioned below main window (startup)
+    // Calculate position: CENTER X on screen, positioned directly below main window (startup)
     let screen_size = monitor.size();
-    let gap_between_windows = 10i32;
     let response_x = (screen_size.width as i32 - ai_response_width as i32) / 2; // CENTER on screen horizontally
-    let response_y = main_outer_position.y + main_outer_size.height as i32 + gap_between_windows; // Below main window
+    let response_y = main_outer_position.y + main_outer_size.height as i32; // Directly below main window (no gap)
     
     info!("🔍 DEBUG (startup): Positioning calculation:");
     info!("  - Main outer width: {}, AI width: {} (EXACT MATCH)", main_outer_size.width, ai_response_width);
-    info!("  - Main window position: ({}, {}), AI window position: ({}, {}) (SAME X, BELOW Y)", main_outer_position.x, main_outer_position.y, response_x, response_y);
-    info!("  - Gap between windows: {}px", gap_between_windows);
+    info!("  - Main window position: ({}, {}), AI window position: ({}, {}) (CENTERED X, DIRECTLY BELOW Y)", main_outer_position.x, main_outer_position.y, response_x, response_y);
+    info!("  - No gap between windows for seamless appearance");
     info!("  - Final position: ({}, {})", response_x, response_y);
     
-    info!("📐 AI Response Window Position (startup): main={}x{} at ({}, {}), AI={}x{} at ({}, {}) [SAME X & SAME WIDTH, BELOW]", 
+    info!("📏 AI Response Window Position (startup): main={}x{} at ({}, {}), AI={}x{} at ({}, {}) [CENTERED & SAME WIDTH, NO GAP]", 
           main_outer_size.width, main_outer_size.height, main_outer_position.x, main_outer_position.y,
           ai_response_width, ai_response_height, response_x, response_y);
     
@@ -1691,23 +1728,23 @@ async fn send_ai_response_data(app_handle: AppHandle, data: AiResponseData) -> R
             Ok(_) => {
                 info!("✅ RUST DEBUG: JavaScript evaluation successful - AI response data sent successfully");
                 
-                // Keep window at fixed 500px height - no automatic content-based resizing
+                // Keep window at fixed 550px height - no automatic content-based resizing
                 if data.message_type == "complete" {
-                    info!("🔄 RUST DEBUG: Content complete - ensuring window stays at 500px height");
+                    info!("🔄 RUST DEBUG: Content complete - ensuring window stays at 550px height");
                     
-                    // Always maintain 500px height for consistent experience
-                    let fixed_height = 500u32;
+                    // Always maintain 550px height for consistent experience
+                    let fixed_height = 550u32;
                     
                     info!("📏 RUST DEBUG: Maintaining fixed height: {}px (no content-based auto-resize)", fixed_height);
                     
-                    // Only resize if current height is different from 500px
+                    // Only resize if current height is different from 550px
                     if let Some(window) = app_handle.get_webview_window("ai-response") {
                         if let Ok(current_size) = window.outer_size() {
                             if current_size.height != fixed_height {
                                 if let Err(resize_err) = resize_ai_response_window(app_handle.clone(), fixed_height) {
                                     warn!("❌ RUST DEBUG: Failed to maintain 500px height: {}", resize_err);
                                 } else {
-                                    info!("✅ RUST DEBUG: Window height maintained at 500px");
+                                    info!("✅ RUST DEBUG: Window height maintained at 550px");
                                 }
                             }
                         }
@@ -1757,7 +1794,7 @@ fn create_ai_response_window_enhanced_below(app_handle: AppHandle) -> Result<Str
     
     // AI response window dimensions - SAME WIDTH as main window
     let ai_width = main_outer_size.width;
-    let ai_height = 500u32; // Increased default height for better visibility
+    let ai_height = 550u32; // Increased default height for better visibility
     
     // CRITICAL FIX: Position calculation for proper centering with DPI awareness
     // Calculate center X position of main window in logical coordinates first
@@ -1766,20 +1803,19 @@ fn create_ai_response_window_enhanced_below(app_handle: AppHandle) -> Result<Str
     
     // Calculate AI window position to center it below main window (logical coordinates)
     let ai_x_logical = main_center_x_logical - (ai_width_logical / 2.0);
-    // Adjust gap based on scale factor to compensate for DPI scaling issues
-    let gap_adjustment = if scale_factor < 1.5 { -2.0 / scale_factor } else { 0.0 };
-    let ai_y_logical = (main_outer_position.y as f64 / scale_factor) + (main_outer_size.height as f64 / scale_factor) + gap_adjustment;
+    // Remove gap adjustment to eliminate invisible spacing - position directly below
+    let ai_y_logical = (main_outer_position.y as f64 / scale_factor) + (main_outer_size.height as f64 / scale_factor);
     
     // Convert back to physical coordinates ONLY ONCE
     let ai_x_physical = (ai_x_logical * scale_factor) as i32;
     let ai_y_physical = (ai_y_logical * scale_factor) as i32;
     
-    info!("🎯 DPI-FIXED Positioning:");
-    info!("  - Scale factor: {:.2} (gap adjustment: {:.1}px)", scale_factor, gap_adjustment);
+    info!("🎯 DPI-FIXED Positioning (NO GAP):");
+    info!("  - Scale factor: {:.2} (no gap adjustment - direct positioning)", scale_factor);
     info!("  - Main center logical: {:.1}", main_center_x_logical);
     info!("  - AI window logical: {:.1}x{:.1} at ({:.1}, {:.1})", ai_width_logical, ai_height as f64 / scale_factor, ai_x_logical, ai_y_logical);
     info!("  - AI window physical: {}x{} at ({}, {})", ai_width, ai_height, ai_x_physical, ai_y_physical);
-    info!("  - Gap calculation: scale < 1.5? {}, adjustment: {:.2}px logical", scale_factor < 1.5, gap_adjustment);
+    info!("  - Positioning: Directly below main window with no gap");
     
     // Create response window configuration
     let window_url = if cfg!(debug_assertions) {
@@ -2581,7 +2617,238 @@ struct ScreenshotResponse {
     height: u32,
 }
 
-// Screenshot commands removed - using accessibility-based analysis instead
+/// Capture a screenshot of the entire screen and return base64 encoded image data
+#[tauri::command]
+async fn capture_screenshot() -> Result<ScreenshotResponse, String> {
+    info!("📸 Capturing screenshot...");
+    
+    use screenshots::Screen;
+    
+    let screens = Screen::all().ok_or("Failed to get screens")?;
+    let screen = screens.first().ok_or("No screens found")?;
+    
+    let image = screen.capture().ok_or("Failed to capture screen")?;
+    
+    let width = image.width();
+    let height = image.height();
+    
+    info!("📸 Screenshot captured: {}x{} pixels", width, height);
+    
+    // Get raw RGBA bytes from image and clone to own the data
+    let rgba_data = image.buffer().to_vec();
+    
+    info!("📸 Raw buffer size: {} bytes (expected: {} for RGBA)", rgba_data.len(), width * height * 4);
+    
+    // Ensure we have the correct number of bytes (width * height * 4 for RGBA)
+    let expected_len = (width * height * 4) as usize;
+    if rgba_data.len() != expected_len {
+        return Err(format!("Invalid buffer size: got {} bytes, expected {} bytes for {}x{} RGBA", 
+                          rgba_data.len(), expected_len, width, height));
+    }
+    
+    // Create an ImageBuffer from the raw data and convert to PNG
+    let img_buffer = match image::ImageBuffer::<image::Rgba<u8>, Vec<u8>>::from_raw(width, height, rgba_data) {
+        Some(buffer) => buffer,
+        None => {
+            // Fallback: try converting from BGRA to RGBA if needed
+            let mut fixed_rgba_data = image.buffer().to_vec();
+            
+            // Convert BGRA to RGBA if necessary (common on Windows)
+            for chunk in fixed_rgba_data.chunks_mut(4) {
+                if chunk.len() == 4 {
+                    chunk.swap(0, 2); // Swap B and R channels
+                }
+            }
+            
+            image::ImageBuffer::<image::Rgba<u8>, Vec<u8>>::from_raw(width, height, fixed_rgba_data)
+                .ok_or("Failed to create image buffer even after BGRA->RGBA conversion")?
+        }
+    };
+    
+    // Convert to PNG bytes
+    let mut png_bytes = std::io::Cursor::new(Vec::new());
+    img_buffer.write_to(&mut png_bytes, image::ImageOutputFormat::Png)
+        .map_err(|e| format!("Failed to encode PNG: {}", e))?;
+    let png_data = png_bytes.into_inner();
+    
+    let base64_image = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png_data);
+    
+    info!("✅ Screenshot captured: {}x{} pixels, {} KB", width, height, png_data.len() / 1024);
+    
+    Ok(ScreenshotResponse {
+        screenshot: base64_image,
+        width,
+        height,
+    })
+}
+
+/// Answer questions found in a screenshot using vision-capable models with streaming
+#[tauri::command]
+async fn answer_screenshot_questions_streaming(
+    payload: AnalyzeScreenWithAiPayload,
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+) -> Result<String, String> {
+    info!("📸 Starting screenshot question-answering with streaming...");
+    
+    // Show the AI response window before starting
+    if let Err(e) = show_ai_response_window(app_handle.clone()) {
+        warn!("Failed to show AI response window: {}", e);
+    }
+    
+    // Send initial status to UI
+    let status_data = AiResponseData {
+        message_type: "stream-token".to_string(),
+        text: Some("[SCREENSHOT] Capturing screen for question analysis...".to_string()),
+        error: None,
+    };
+    let _ = send_ai_response_data(app_handle.clone(), status_data).await;
+    
+    // Capture screenshot
+    let screenshot_response = match capture_screenshot().await {
+        Ok(response) => response,
+        Err(e) => {
+            error!("❌ Failed to capture screenshot: {}", e);
+            let error_data = AiResponseData {
+                message_type: "error".to_string(),
+                text: None,
+                error: Some(format!("Failed to capture screenshot: {}", e)),
+            };
+            let _ = send_ai_response_data(app_handle, error_data).await;
+            return Err(e);
+        }
+    };
+    
+    let status_data = AiResponseData {
+        message_type: "stream-token".to_string(),
+        text: Some(format!("[SCREENSHOT] ✅ Screen captured ({}x{})! Analyzing with AI...", 
+            screenshot_response.width, screenshot_response.height)),
+        error: None,
+    };
+    let _ = send_ai_response_data(app_handle.clone(), status_data).await;
+    
+    // Initialize streaming state
+    let stream_start_time = std::time::Instant::now();
+    let _ = app_handle.emit("ai-stream-start", ());
+    
+    // Determine AI provider and context
+    let provider = AIProvider::from_str(&payload.provider).unwrap_or(AIProvider::Pollinations);
+    let mut context = {
+        let context_guard = state.interview_context.lock();
+        context_guard.clone()
+    };
+    
+    if let Some(company) = payload.company { context.company = Some(company); }
+    if let Some(position) = payload.position { context.position = Some(position); }
+    if let Some(job_description) = payload.job_description { context.job_description = Some(job_description); }
+    
+    let analysis_prompt = "Look at this screenshot and identify any questions (especially from chat boxes, meeting interfaces, or interview prompts). Answer them directly and concisely.";
+    
+    let app_handle_clone = app_handle.clone();
+    let result = match provider {
+        AIProvider::Pollinations => {
+            info!("🧠 Using Pollinations for screenshot question-answering");
+            
+            match state.ensure_pollinations_client() {
+                Ok(()) => {
+                    let client = {
+                        let client_guard = state.pollinations_client.lock();
+                        client_guard.as_ref().unwrap().clone()
+                    };
+                    
+                    // Find a vision-capable model
+                    let model = pollinations::PollinationsModel::from_string(&payload.model)
+                        .unwrap_or(pollinations::PollinationsModel::Custom("openai".to_string()));
+                        
+                    if !model.supports_vision() {
+                        // Fallback to a vision-capable model
+                        let vision_model = pollinations::PollinationsModel::Custom("openai".to_string());
+                        info!("⚠️ Selected model '{}' doesn't support vision, using '{}' instead", 
+                              model.as_str(), vision_model.as_str());
+                        
+                        client.answer_screenshot_questions_streaming(
+                            &screenshot_response.screenshot,
+                            analysis_prompt,
+                            &context,
+                            vision_model,
+                            move |token: &str| {
+                                let data = AiResponseData {
+                                    message_type: "stream-token".to_string(),
+                                    text: Some(token.to_string()),
+                                    error: None,
+                                };
+                                let app_handle_for_token = app_handle_clone.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = send_ai_response_data(app_handle_for_token, data).await {
+                                        error!("Failed to send streaming token to UI: {}", e);
+                                    }
+                                });
+                            }
+                        ).await
+                    } else {
+                        client.answer_screenshot_questions_streaming(
+                            &screenshot_response.screenshot,
+                            analysis_prompt,
+                            &context,
+                            model,
+                            move |token: &str| {
+                                let data = AiResponseData {
+                                    message_type: "stream-token".to_string(),
+                                    text: Some(token.to_string()),
+                                    error: None,
+                                };
+                                let app_handle_for_token = app_handle_clone.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = send_ai_response_data(app_handle_for_token, data).await {
+                                        error!("Failed to send streaming token to UI: {}", e);
+                                    }
+                                });
+                            }
+                        ).await
+                    }
+                },
+                Err(e) => Err(anyhow::anyhow!("Pollinations client unavailable: {}", e))
+            }
+        },
+        AIProvider::OpenAI => {
+            info!("🤖 Using OpenAI for screenshot question-answering");
+            // OpenAI implementation can be added here if needed
+            Err(anyhow::anyhow!("OpenAI screenshot analysis not implemented yet"))
+        }
+    };
+    
+    let elapsed_time = stream_start_time.elapsed();
+    
+    match result {
+        Ok(response) => {
+            info!("✅ Screenshot question-answering completed in {:.2?}. Response length: {}", elapsed_time, response.len());
+            
+            // Send completion signal
+            let completion_data = AiResponseData {
+                message_type: "complete".to_string(),
+                text: Some(response.clone()),
+                error: None,
+            };
+            let _ = send_ai_response_data(app_handle.clone(), completion_data).await;
+            let _ = app_handle.emit("ai-stream-complete", response.clone());
+            
+            Ok(response)
+        },
+        Err(e) => {
+            error!("❌ Screenshot question-answering failed: {}", e);
+            
+            let error_data = AiResponseData {
+                message_type: "error".to_string(),
+                text: None,
+                error: Some(e.to_string()),
+            };
+            let _ = send_ai_response_data(app_handle.clone(), error_data).await;
+            let _ = app_handle.emit("ai-stream-error", e.to_string());
+            
+            Err(e.to_string())
+        }
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 struct AnalyzeScreenWithAiPayload {
@@ -2984,27 +3251,59 @@ async fn generate_ai_analysis_from_text(
                             Ok(result)
                         },
                         Err(pollinations_error) => {
-                            warn!("[FALLBACK] Pollinations failed: {}, falling back to OpenAI", pollinations_error);
+                            let error_str = pollinations_error.to_string();
+                            let is_infrastructure_issue = error_str.contains("HTTP 530") || 
+                                error_str.contains("infrastructure issues") ||
+                                error_str.contains("health check failed");
                             
-                            // Send fallback status
-                            let fallback_status = AiResponseData {
-                                message_type: "stream-token".to_string(),
-                                text: Some("\n[FALLBACK] Pollinations failed, switching to OpenAI...".to_string()),
-                                error: None,
-                            };
-                            let _ = send_ai_response_data(app_handle_clone.clone(), fallback_status).await;
+                            if is_infrastructure_issue {
+                                warn!("[FALLBACK] Pollinations infrastructure issue detected: {}, falling back to OpenAI", pollinations_error);
+                                
+                                // Send informative fallback status for infrastructure issues
+                                let fallback_status = AiResponseData {
+                                    message_type: "stream-token".to_string(),
+                                    text: Some("\n[INFRASTRUCTURE] Pollinations service temporarily unavailable (HTTP 530 errors). Switching to OpenAI...".to_string()),
+                                    error: None,
+                                };
+                                let _ = send_ai_response_data(app_handle_clone.clone(), fallback_status).await;
+                            } else {
+                                warn!("[FALLBACK] Pollinations failed: {}, falling back to OpenAI", pollinations_error);
+                                
+                                // Send general fallback status
+                                let fallback_status = AiResponseData {
+                                    message_type: "stream-token".to_string(),
+                                    text: Some("\n[FALLBACK] Pollinations failed, switching to OpenAI...".to_string()),
+                                    error: None,
+                                };
+                                let _ = send_ai_response_data(app_handle_clone.clone(), fallback_status).await;
+                            }
                             
                             // Fallback to OpenAI
-                            state.ensure_openai_client()?;
-                            let openai_client = {
-                                let client_guard = state.openai_client.lock();
-                                client_guard.as_ref().unwrap().clone()
-                            };
-                            
-                            let openai_model = openai::OpenAIModel::GPT4Turbo; // Use a reliable model
-                            openai_client.generate_answer(&analysis_prompt, &context, openai_model)
-                                .await
-                                .map_err(|e| format!("OpenAI fallback also failed: {}", e))
+                            match state.ensure_openai_client() {
+                                Ok(()) => {
+                                    let openai_client = {
+                                        let client_guard = state.openai_client.lock();
+                                        client_guard.as_ref().unwrap().clone()
+                                    };
+                                    
+                                    let openai_model = openai::OpenAIModel::GPT4Turbo; // Use a reliable model
+                                    
+                                    // Send status update about OpenAI processing
+                                    let processing_status = AiResponseData {
+                                        message_type: "stream-token".to_string(),
+                                        text: Some("\n[OPENAI] Processing with GPT-4 Turbo...".to_string()),
+                                        error: None,
+                                    };
+                                    let _ = send_ai_response_data(app_handle_clone.clone(), processing_status).await;
+                                    
+                                    openai_client.generate_answer(&analysis_prompt, &context, openai_model)
+                                        .await
+                                        .map_err(|e| format!("OpenAI fallback also failed: {}", e))
+                                },
+                                Err(client_error) => {
+                                    Err(format!("Both Pollinations and OpenAI failed. Pollinations: {}. OpenAI client setup: {}", pollinations_error, client_error))
+                                }
+                            }
                         }
                     }
                 },
