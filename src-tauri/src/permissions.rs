@@ -1,7 +1,6 @@
 use std::process::Command;
 use log::{info, error, warn};
 use anyhow::{Result, anyhow};
-use std::fs;
 use std::path::PathBuf;
 
 pub struct PermissionManager;

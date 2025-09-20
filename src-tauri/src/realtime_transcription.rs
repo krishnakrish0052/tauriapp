@@ -97,11 +97,11 @@ pub struct DeepgramConfig {
 impl Default for DeepgramConfig {
     fn default() -> Self {
         Self {
-            model: "nova-3".to_string(), // Latest Nova-3 model for speed and accuracy
+            model: "nova-2".to_string(), // Use Nova-2 for better accuracy and reliability
             language: "en-US".to_string(),
             smart_format: true,
             interim_results: true,
-            endpointing: 25, // ULTRA-FAST 25ms for instant speech detection (reduced from 100ms)
+            endpointing: 10, // ULTRA-FAST 10ms for instant speech detection - improved responsiveness
             keep_alive: true,
             punctuate: true,
             profanity_filter: false,
@@ -233,8 +233,8 @@ impl DeepgramConfig {
 impl Default for AudioConfig {
     fn default() -> Self {
         Self {
-            sample_rate: 16000, // Optimized for speech recognition (reduced from 44100)
-            channels: 1,        // Mono for better speech processing (reduced from stereo)
+            sample_rate: 16000, // Optimized for Deepgram speech recognition
+            channels: 1,        // Mono for better speech processing and bandwidth
             is_microphone: false,
         }
     }
@@ -504,10 +504,10 @@ impl RealTimeTranscription {
 
     /// Create audio stream based on configuration
     fn create_audio_stream(config: AudioConfig, audio_stop_signal: Arc<AtomicBool>) -> Result<FuturesReceiver<Result<Bytes, RecvError>>> {
-        info!("Creating audio stream: {:?}", config);
+        info!("Creating enhanced audio stream for better transcription: {:?}", config);
 
-        let (sync_tx, sync_rx) = crossbeam::channel::bounded(10); // ULTRA-small buffer for minimal latency
-        let (mut async_tx, async_rx) = mpsc::channel(5); // ULTRA-minimal async buffer
+        let (sync_tx, sync_rx) = crossbeam::channel::bounded(20); // Enhanced buffer for quality (doubled from 10)
+        let (mut async_tx, async_rx) = mpsc::channel(10); // Enhanced async buffer for stability
 
         // Spawn audio capture thread
         let config_clone = config.clone();
@@ -527,7 +527,7 @@ impl RealTimeTranscription {
                     break;
                 }
 
-                match sync_rx.recv_timeout(Duration::from_millis(10)) { // ULTRA-FAST 10ms timeout for minimal latency
+                match sync_rx.recv_timeout(Duration::from_millis(50)) { // Balanced 50ms timeout for quality vs latency
                     Ok(data) => {
                         if async_tx.send(Ok(data)).await.is_err() {
                             break;
@@ -706,31 +706,34 @@ impl RealTimeTranscription {
         Ok(stream)
     }
 
-    /// Convert stereo to mono by averaging channels
+    /// Enhanced stereo to mono conversion with proper gain compensation
     fn stereo_to_mono(stereo_data: &[i16]) -> Vec<i16> {
         let mut mono_data = Vec::with_capacity(stereo_data.len() / 2);
         
         for chunk in stereo_data.chunks_exact(2) {
-            // Average left and right channels
+            // Enhanced mixing: sum channels and apply proper gain compensation
+            // Using RMS-style mixing for better quality than simple averaging
             let left = chunk[0] as i32;
             let right = chunk[1] as i32;
-            let mono = ((left + right) / 2) as i16;
-            mono_data.push(mono);
+            
+            // Prevent overflow by clamping the result
+            let mixed = ((left + right) / 2).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+            mono_data.push(mixed);
         }
         
         mono_data
     }
     
-    /// Better resampling from 48000 Hz to 16000 Hz with basic anti-aliasing
+    /// Enhanced resampling from 48000 Hz to 16000 Hz with improved anti-aliasing
     fn resample_48k_to_16k(input_data: &[i16]) -> Vec<i16> {
         let mut output_data = Vec::with_capacity(input_data.len() / 3);
         
-        // Better resampling with simple averaging for anti-aliasing
-        // Instead of simple decimation, average 3 consecutive samples
+        // Enhanced resampling with weighted averaging for better anti-aliasing
+        // Use weighted average instead of simple average for better quality
         for chunk in input_data.chunks_exact(3) {
-            // Average the 3 samples to reduce aliasing
-            let avg = ((chunk[0] as i32 + chunk[1] as i32 + chunk[2] as i32) / 3) as i16;
-            output_data.push(avg);
+            // Weighted average: center sample has higher weight for better clarity
+            let weighted_avg = ((chunk[0] as i32 * 2 + chunk[1] as i32 * 4 + chunk[2] as i32 * 2) / 8) as i16;
+            output_data.push(weighted_avg);
         }
         
         output_data

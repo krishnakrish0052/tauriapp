@@ -1,4 +1,4 @@
-use tauri::{AppHandle, WebviewWindow, LogicalSize, LogicalPosition, Monitor, PhysicalSize, PhysicalPosition, Manager};
+use tauri::{AppHandle, WebviewWindow, LogicalSize, PhysicalSize, PhysicalPosition, Manager};
 use log::{info, warn, error};
 use serde::{Serialize, Deserialize};
 use anyhow::Result;
@@ -54,22 +54,24 @@ pub fn setup_main_window_dpi_aware(app_handle: &AppHandle) -> Result<(), String>
         info!("📊 Monitor info: {}x{} (scale: {:.2})", 
               monitor_size.width, monitor_size.height, scale_factor);
         
-        // Calculate responsive window dimensions based on screen size (reduced by 25%)
-        let base_width = 600.0; // Reduced from 800px by 25%
+        // FIXED: Use consistent window dimensions regardless of DPI scale factor
+        let base_width = 600.0; // Fixed width in logical pixels
         let base_height = 110.0;
         
-        // Scale window size for smaller screens
-        let effective_screen_width = (monitor_size.width as f64) / scale_factor;
-        let effective_screen_height = (monitor_size.height as f64) / scale_factor;
+        // Calculate logical screen dimensions (what the user sees)
+        let logical_screen_width = (monitor_size.width as f64) / scale_factor;
+        let logical_screen_height = (monitor_size.height as f64) / scale_factor;
         
-        let window_width = if effective_screen_width < 1024.0 {
-            // For smaller screens, use 90% of screen width but cap at 675px (25% reduction)
-            (effective_screen_width * 0.9).min(675.0).max(300.0)
+        // CRITICAL FIX: Use fixed width regardless of scale factor for consistent appearance
+        let window_width = if logical_screen_width < 1024.0 {
+            // For smaller screens, use percentage of logical screen width
+            (logical_screen_width * 0.9).min(675.0).max(300.0)
         } else {
+            // Use fixed logical width - this maintains consistent visual size at all scale factors
             base_width
         };
         
-        let window_height = if effective_screen_height < 768.0 {
+        let window_height = if logical_screen_height < 768.0 {
             // For smaller screens, slightly reduce height
             (base_height * 0.9_f64).max(80.0)
         } else {
@@ -77,7 +79,7 @@ pub fn setup_main_window_dpi_aware(app_handle: &AppHandle) -> Result<(), String>
         };
         
         // Position window at top center
-        let x = ((effective_screen_width - window_width) / 2.0) as i32; // Center horizontally
+        let x = ((logical_screen_width - window_width) / 2.0) as i32; // Center horizontally
         let y = 0; // At the very top
         
         info!("🎯 Enhanced positioning: {}x{:.0} at ({}, {}) with scale {:.2}", 
@@ -89,12 +91,47 @@ pub fn setup_main_window_dpi_aware(app_handle: &AppHandle) -> Result<(), String>
         let physical_x = (x as f64 * scale_factor) as i32;
         let physical_y = (y as f64 * scale_factor) as i32;
         
-        // Set the window size with DPI awareness
+        // Set the window size with DPI awareness using INNER size to avoid invisible chrome
         if let Err(e) = window.set_size(tauri::Size::Physical(PhysicalSize {
             width: physical_width,
             height: physical_height,
         })) {
             warn!("Failed to set window size: {}", e);
+        }
+        
+        // CRITICAL FIX: Force the outer size to match inner size to eliminate invisible boundary
+        // Check if there's a difference between outer and inner size after setting
+        if let (Ok(outer_size), Ok(inner_size)) = (window.outer_size(), window.inner_size()) {
+            let chrome_height = outer_size.height as i32 - inner_size.height as i32;
+            let chrome_width = outer_size.width as i32 - inner_size.width as i32;
+            
+            if chrome_height > 0 || chrome_width > 0 {
+                info!("🔧 FIXING: Detected invisible chrome/padding: width={}px, height={}px", chrome_width, chrome_height);
+                
+                // Adjust the window size to compensate for chrome
+                let adjusted_physical_width = if chrome_width > 0 { 
+                    (physical_width as i32 - chrome_width).max(100) as u32 
+                } else { 
+                    physical_width 
+                };
+                let adjusted_physical_height = if chrome_height > 0 { 
+                    (physical_height as i32 - chrome_height).max(50) as u32 
+                } else { 
+                    physical_height 
+                };
+                
+                info!("🎯 ADJUSTING: Window size from {}x{} to {}x{} to eliminate chrome", 
+                      physical_width, physical_height, adjusted_physical_width, adjusted_physical_height);
+                
+                if let Err(e) = window.set_size(tauri::Size::Physical(PhysicalSize {
+                    width: adjusted_physical_width,
+                    height: adjusted_physical_height,
+                })) {
+                    warn!("Failed to adjust window size for chrome elimination: {}", e);
+                } else {
+                    info!("✅ Main window size adjusted to eliminate invisible boundary");
+                }
+            }
         }
         
         // Set the window position with DPI awareness  

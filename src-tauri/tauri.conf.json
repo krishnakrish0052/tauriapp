@@ -27,7 +27,11 @@
         "decorations": false,
         "transparent": true,
         "shadow": false,
-        "center": true
+        "center": true,
+        "contentProtected": false,
+        "userAgent": null,
+        "incognito": false,
+        "proxyUrl": null
       }
     ],
     "security": {

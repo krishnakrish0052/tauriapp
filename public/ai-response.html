@@ -29,11 +29,14 @@
     }
 
     body {
-      border: 1px solid rgba(59, 130, 246, 0.4); /* Thinner border */
-      border-radius: 8px; /* Smaller border radius */
-      box-shadow: 0 0 15px rgba(59, 130, 246, 0.2);
+      /* Add rounded borders with 5px gap from main window */
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
       margin: 0;
+      padding: 0;
       position: relative;
+      overflow: hidden; /* Ensure rounded corners are clean */
     }
 
     /* Container */
@@ -44,6 +47,7 @@
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      border-radius: 12px; /* Match body border-radius */
     }
 
     /* Header */
@@ -55,6 +59,7 @@
       background: rgba(0, 0, 0, 0.2); /* More transparent header */
       border-bottom: 1px solid rgba(255, 255, 255, 0.05);
       flex-shrink: 0;
+      border-radius: 12px 12px 0 0; /* Rounded top corners only */
     }
 
     /* Header controls */
@@ -491,36 +496,40 @@
       switch(messageType) {
         case 'stream':
         case 'stream-token':
-          // Handle streaming tokens
+          // Handle streaming tokens with optimized first token display
           const token = data.token || data.text || '';
           if (token) {
-            // Initialize response text container if it doesn't exist
+            // Initialize response text container if it doesn't exist (IMMEDIATE)
             let responseTextElement = document.getElementById('response-text');
             if (!responseTextElement) {
+              // Clear loading immediately and show streaming container
               contentElement.innerHTML = '<div class="response-text streaming-active" id="response-text"></div>';
               responseTextElement = document.getElementById('response-text');
-              // Store raw text for processing
               responseTextElement.dataset.rawText = '';
+              
+              // Update status immediately for first token
+              statusElement.textContent = 'Streaming...';
+              console.log('🚀 First token - initialized streaming container');
             } else {
-              // Add streaming class for performance optimizations
               responseTextElement.classList.add('streaming-active');
             }
             
             // Accumulate raw text
             responseTextElement.dataset.rawText += token;
             
-            // Process and display the markdown with performance optimization
-            const processedHtml = processMarkdown(responseTextElement.dataset.rawText);
-            
-            // Use requestAnimationFrame for smooth updates
-            requestAnimationFrame(() => {
-              responseTextElement.innerHTML = processedHtml;
-              // Auto-scroll to bottom
+            // For first few tokens, use direct text insertion for speed
+            if (responseTextElement.dataset.rawText.length < 100) {
+              // Direct text insertion for immediate display (no markdown processing)
+              responseTextElement.textContent = responseTextElement.dataset.rawText;
+              // Auto-scroll immediately
               contentElement.scrollTop = contentElement.scrollHeight;
-            });
-            
-            // Update status
-            statusElement.textContent = 'Streaming...';
+            } else {
+              // Use markdown processing for longer content
+              const processedHtml = processMarkdown(responseTextElement.dataset.rawText);
+              // Use immediate update for better performance
+              responseTextElement.innerHTML = processedHtml;
+              contentElement.scrollTop = contentElement.scrollHeight;
+            }
           }
           break;
           

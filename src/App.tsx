@@ -78,6 +78,7 @@ interface AppState {
 function App() {
   const { autoResize } = useResponsiveWindow();
   const [windowHeight, setWindowHeight] = useState(400);
+  const contentRef = useRef<HTMLDivElement>(null);
   
   const [state, setState] = useState<AppState>({
     currentScreen: 'session_connection',
@@ -148,6 +149,83 @@ function App() {
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+  
+  // Auto-resize window to match content height ONLY (not width - let DPI handle width)
+  useEffect(() => {
+    const resizeWindowToContent = async () => {
+      if (contentRef.current) {
+        // Get the exact bounding box of the container
+        const rect = contentRef.current.getBoundingClientRect();
+        const contentHeight = Math.ceil(rect.height);
+        // DON'T use contentWidth from getBoundingClientRect as it's affected by DPI scaling
+        
+        // CRITICAL FIX: Account for DPI scaling in height calculation
+        // getBoundingClientRect returns logical pixels, but resize_main_window expects physical pixels
+        const devicePixelRatio = window.devicePixelRatio || 1;
+        const physicalContentHeight = Math.ceil(contentHeight * devicePixelRatio);
+        
+        console.log(`🎯 Content height: ${contentHeight}px logical, ${physicalContentHeight}px physical (DPR: ${devicePixelRatio})`);
+        
+        try {
+          // ONLY resize height to match content - let the DPI system handle width
+          // Get current window size to preserve width
+          const currentSize = await invoke('get_window_info') as any;
+          if (currentSize && currentSize.width) {
+            await invoke('resize_main_window', {
+              width: currentSize.width,        // Keep current width (managed by DPI system)
+              height: physicalContentHeight   // Use physical pixels for height
+            });
+            console.log(`✅ Window height resized: ${physicalContentHeight}px physical (${contentHeight}px logical, width preserved: ${currentSize.width}px)`);
+          }
+        } catch (error) {
+          console.error('❌ Failed to resize window:', error);
+        }
+      }
+    };
+    
+    // Resize immediately and after DOM updates
+    resizeWindowToContent();
+    const timer = setTimeout(resizeWindowToContent, 100);
+    return () => clearTimeout(timer);
+  }, [state.currentScreen, state.aiResponseVisible]);
+  
+  // Also trigger resize on mount and when content changes (HEIGHT ONLY)
+  useEffect(() => {
+    const resizeObserver = new ResizeObserver(async () => {
+      if (contentRef.current) {
+        const rect = contentRef.current.getBoundingClientRect();
+        const contentHeight = Math.ceil(rect.height);
+        // Don't use contentWidth from getBoundingClientRect - it's DPI affected
+        
+        // CRITICAL FIX: Account for DPI scaling in ResizeObserver height calculation
+        const devicePixelRatio = window.devicePixelRatio || 1;
+        const physicalContentHeight = Math.ceil(contentHeight * devicePixelRatio);
+        
+        console.log(`🔄 ResizeObserver: Height changed to ${contentHeight}px logical, ${physicalContentHeight}px physical (DPR: ${devicePixelRatio})`);
+        
+        try {
+          // ONLY resize height - preserve DPI-managed width
+          const currentSize = await invoke('get_window_info') as any;
+          if (currentSize && currentSize.width) {
+            await invoke('resize_main_window', {
+              width: currentSize.width,        // Preserve DPI-managed width
+              height: physicalContentHeight   // Use physical pixels for height
+            });
+          }
+        } catch (error) {
+          console.error('❌ ResizeObserver resize failed:', error);
+        }
+      }
+    });
+    
+    if (contentRef.current) {
+      resizeObserver.observe(contentRef.current);
+    }
+    
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, []);
 
   // Timer utilities
   const formatTime = (seconds: number): string => {
@@ -1462,7 +1540,11 @@ function App() {
   };
 
   return (
-    <div className="w-screen h-auto bg-transparent">
+    <div 
+      ref={contentRef}
+      className="w-fit h-fit bg-transparent relative flex flex-col"
+      style={{ minWidth: '100vw' }}
+    >
       {state.currentScreen === 'session_connection' && renderSessionConnectionScreen()}
       {state.currentScreen === 'confirmation' && renderConfirmationScreen()}
       {state.currentScreen === 'main' && renderMainScreen()}

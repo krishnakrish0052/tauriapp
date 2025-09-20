@@ -86,6 +86,28 @@ html, body {
     line-height: 1.6;
     font-size: 14px;
     overflow: hidden;
+    /* FIXED: Match content size exactly */
+    height: fit-content;
+    min-height: 0;
+    box-sizing: border-box;
+  }
+  
+  /* Force root elements to exact sizing */
+  html {
+    margin: 0;
+    padding: 0;
+    height: fit-content;
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+  
+  /* Ensure no extra space in main container */
+  #root {
+    height: fit-content;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
   }
 }
 

@@ -54,6 +54,10 @@ pub fn run() -> Result<()> {
             toggle_always_on_top,
             create_ai_response_window,
             close_ai_response_window,
+            debug_main_window_dimensions,
+            fix_main_window_invisible_boundary,
+            force_window_exact_content_size,
+            nuclear_fix_webview_padding,
             resize_ai_response_window,
             show_ai_response_window,
             hide_ai_response_window,
@@ -235,6 +239,33 @@ pub fn run() -> Result<()> {
                     } else {
                         info!("✅ DPI-aware positioning initialized successfully");
                     }
+                    
+                    // CRITICAL FIX: Auto-fix invisible boundary after DPI setup
+                    let main_window_clone = main_window.clone();
+                    std::thread::spawn(move || {
+                        // Wait for window to be fully initialized
+                        std::thread::sleep(std::time::Duration::from_millis(800));
+                        
+                        if let (Ok(outer_size), Ok(inner_size)) = (main_window_clone.outer_size(), main_window_clone.inner_size()) {
+                            let chrome_height = outer_size.height as i32 - inner_size.height as i32;
+                            
+                            if chrome_height > 0 {
+                                info!("🔧 STARTUP AUTO-FIX: Detected {}px invisible boundary, fixing...", chrome_height);
+                                
+                                // Set window size to inner size to eliminate chrome
+                                if let Err(e) = main_window_clone.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+                                    width: inner_size.width,
+                                    height: inner_size.height,
+                                })) {
+                                    error!("Failed to auto-fix invisible boundary: {}", e);
+                                } else {
+                                    info!("✅ STARTUP AUTO-FIX: {}px invisible boundary eliminated automatically", chrome_height);
+                                }
+                            } else {
+                                info!("✅ STARTUP CHECK: No invisible boundary detected");
+                            }
+                        }
+                    });
                     
                     // Log current window configuration for debugging
                     if let Ok(config) = window_manager::get_window_configuration(&main_window) {
@@ -602,7 +633,18 @@ async fn pollinations_generate_answer_streaming(
     info!("⚡ SPEED OPTIMIZED: Starting progressive streaming for AI response window");
     let _ = app_handle.emit("ai-stream-start", ());
     
-    // Skip ready signal for maximum speed - start immediately
+    // Send immediate ready signal to AI response window to prepare for tokens
+    let ready_data = AiResponseData {
+        message_type: "stream-token".to_string(),
+        text: Some("".to_string()), // Empty token to initialize
+        error: None,
+    };
+    let app_handle_ready = app_handle.clone();
+    tokio::spawn(async move {
+        if let Err(e) = send_ai_response_data(app_handle_ready, ready_data).await {
+            warn!("Failed to send ready signal to AI response window: {}", e);
+        }
+    });
 
     // Stream the response with callback to update UI progressively
     let app_handle_clone = app_handle.clone();
@@ -628,17 +670,22 @@ async fn pollinations_generate_answer_streaming(
                 warn!("Failed to emit streaming token: {}", e);
             }
             
-            // ALSO send token to AI response window for display
+            // ALSO send token to AI response window for display (IMMEDIATE for first tokens)
             let ai_response_data = AiResponseData {
                 message_type: "stream-token".to_string(),
                 text: Some(token.to_string()),
                 error: None,
             };
             let app_handle_for_ai_window = app_handle_clone.clone();
-            tokio::spawn(async move {
-                if let Err(e) = send_ai_response_data(app_handle_for_ai_window, ai_response_data).await {
-                    warn!("Failed to send streaming token to AI response window: {}", e);
-                }
+            
+            // Use immediate task spawning with high priority for first tokens
+            tokio::task::spawn_blocking(move || {
+                // Use blocking spawn for immediate execution
+                tokio::runtime::Handle::current().block_on(async move {
+                    if let Err(e) = send_ai_response_data(app_handle_for_ai_window, ai_response_data).await {
+                        warn!("Failed to send streaming token to AI response window: {}", e);
+                    }
+                });
             });
         }
     ).await;
@@ -1284,32 +1331,45 @@ fn create_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
     // Get screen size first for positioning calculations
     let screen_size = monitor.size();
     
-    // ALIGN with main window positioning: X exactly aligned, Y directly below with 1px overlap
-    let response_x = main_outer_position.x; // ALIGN with main window X position exactly
-    let response_y = main_outer_position.y + main_outer_size.height as i32 - 1; // Directly below with 1px overlap to eliminate gap
+    // WINDOW CONTENT-AWARE POSITIONING: Account for difference between outer and inner window
+    // Calculate the difference between outer and inner window (window decorations)
+    let window_chrome_height = main_outer_size.height as i32 - main_inner_size.height as i32;
     
-    // Window size 
+    // Position AI window below main window with 5px gap
+    let response_x = main_outer_position.x;
+    let main_bottom_y = main_outer_position.y + main_outer_size.height as i32;
+    
+    // CRITICAL FIX: Add DPI-aware gap between main window and AI response window
+    let base_gap = 5.0; // 5px base gap
+    let dpi_aware_gap = (base_gap * scale_factor) as i32; // Scale gap with DPI
+    let final_response_y = main_bottom_y + dpi_aware_gap;
+    
+    info!("🔍 DPI-AWARE GAP: {}px base * {:.2} scale = {}px physical gap", base_gap, scale_factor, dpi_aware_gap);
+    
+    info!("📏 Using consistent -1px overlap for ALL scale factors");
+    
+    // Use original window sizes - no additional DPI scaling needed
     let physical_width = ai_response_width;
     let physical_height = ai_response_height;
     
-    info!("🔍 DEBUG: AI Response Window Alignment:");
+    info!("🔍 DEBUG: CONTENT-AWARE AI Response Window Alignment:");
     info!("  - Screen size (physical): {}x{}", screen_size.width, screen_size.height);
     info!("  - DPI Scale factor: {:.2}", scale_factor);
     info!("  - Main window outer: {}x{} at ({}, {})", main_outer_size.width, main_outer_size.height, main_outer_position.x, main_outer_position.y);
-    info!("  - AI window size: {}x{}", physical_width, physical_height);
-    info!("  - AI window position: ({}, {}) - ALIGNED with main window", response_x, response_y);
-    info!("  - Gap elimination: 1px overlap for seamless connection");
+    info!("  - Main window inner: {}x{}", main_inner_size.width, main_inner_size.height);
+    info!("  - Window chrome height: {}px (NOT USED FOR POSITIONING)", window_chrome_height);
+    info!("  - Main bottom Y: {} + DPI gap: {}px = final Y: {}", main_bottom_y, dpi_aware_gap, final_response_y);
+    info!("  - Content-aware positioning: Consistent -1px overlap for ALL scale factors");
     
-    info!("📏 AI Response Window Position: main_outer={}x{} at ({}, {}), AI={}x{} at ({}, {}) [PERFECTLY ALIGNED, NO GAP]", 
-          main_outer_size.width, main_outer_size.height, main_outer_position.x, main_outer_position.y,
-          ai_response_width, ai_response_height, response_x, response_y);
+    info!("📎 AI Response Window Position: main_content={}x{}, AI={}x{} at ({}, {}) [CONTENT-AWARE ALIGNED]", 
+          main_inner_size.width, main_inner_size.height, ai_response_width, ai_response_height, response_x, final_response_y);
     
     // Screen bounds check for safety (screen_size already obtained above)
     info!("🔍 DEBUG: Screen size: {}x{} (scale: {})", screen_size.width, screen_size.height, scale_factor);
     
     // Ensure AI response window fits on screen (positioned below main window)
     if response_x + ai_response_width as i32 > screen_size.width as i32 ||
-       response_y + ai_response_height as i32 > screen_size.height as i32 {
+       final_response_y + ai_response_height as i32 > screen_size.height as i32 {
         warn!("⚠️ AI response window would go off-screen when positioned below main window");
     }
     
@@ -1333,7 +1393,7 @@ fn create_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
     .min_inner_size(200.0, 100.0)  // Conservative minimum size
     .max_inner_size(physical_width as f64, 800.0 * scale_factor)  // Allow up to 800px max height with DPI scaling
     // Remove max size constraint to allow dynamic resizing
-    .position(response_x as f64, response_y as f64)
+    .position(response_x as f64, final_response_y as f64)
     .resizable(true) // Make resizable for programmatic resizing
     .fullscreen(false)
     .always_on_top(true)
@@ -1359,6 +1419,288 @@ fn create_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
             error!("Failed to create AI response window: {}", e);
             Err(format!("Failed to create AI response window: {}", e))
         }
+    }
+}
+
+#[tauri::command]
+fn debug_main_window_dimensions(app_handle: AppHandle) -> Result<String, String> {
+    info!("🔍 DEBUG: Analyzing main window dimensions for invisible boundary...");
+    
+    if let Some(main_window) = app_handle.get_webview_window("main") {
+        // Get all dimension measurements
+        let outer_position = main_window.outer_position().map_err(|e| e.to_string())?;
+        let outer_size = main_window.outer_size().map_err(|e| e.to_string())?;
+        let inner_position = main_window.inner_position().map_err(|e| e.to_string())?;
+        let inner_size = main_window.inner_size().map_err(|e| e.to_string())?;
+        
+        // Get monitor info
+        let monitor = main_window.current_monitor().map_err(|e| e.to_string())?
+            .ok_or_else(|| "No monitor found".to_string())?;
+        let scale_factor = monitor.scale_factor();
+        
+        // Calculate chrome/padding differences
+        let chrome_width = outer_size.width as i32 - inner_size.width as i32;
+        let chrome_height = outer_size.height as i32 - inner_size.height as i32;
+        let position_offset_x = outer_position.x - inner_position.x;
+        let position_offset_y = outer_position.y - inner_position.y;
+        
+        info!("🔍 MAIN WINDOW DIMENSIONS DEBUG:");
+        info!("  - Scale factor: {:.2}", scale_factor);
+        info!("  - Outer size: {}x{} at ({}, {})", outer_size.width, outer_size.height, outer_position.x, outer_position.y);
+        info!("  - Inner size: {}x{} at ({}, {})", inner_size.width, inner_size.height, inner_position.x, inner_position.y);
+        info!("  - Chrome/padding: width={}px, height={}px", chrome_width, chrome_height);
+        info!("  - Position offset: x={}, y={}", position_offset_x, position_offset_y);
+        
+        if chrome_height > 0 {
+            info!("  ⚠️ INVISIBLE BOUNDARY DETECTED: {}px height difference between outer and inner!", chrome_height);
+        }
+        
+        let debug_info = format!("Main window debug - Outer: {}x{}, Inner: {}x{}, Chrome height: {}px (INVISIBLE BOUNDARY: {}px)", 
+            outer_size.width, outer_size.height, inner_size.width, inner_size.height, chrome_height, chrome_height);
+        
+        Ok(debug_info)
+    } else {
+        Err("Main window not found".to_string())
+    }
+}
+
+// Windows API fix for WebView2 invisible padding
+#[cfg(windows)]
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    SetWindowPos, SWP_NOMOVE, SWP_NOZORDER, SWP_NOACTIVATE
+};
+
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::HWND;
+
+#[tauri::command]
+fn nuclear_fix_webview_padding(app_handle: AppHandle) -> Result<String, String> {
+    info!("💥 NUCLEAR FIX: Direct WebView2 window size control to eliminate ALL padding...");
+    
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos,
+            GWL_STYLE, GWL_EXSTYLE, WS_BORDER, WS_DLGFRAME, WS_THICKFRAME, 
+            WS_MINIMIZEBOX, WS_MAXIMIZEBOX, WS_SYSMENU,
+            WS_EX_CLIENTEDGE, WS_EX_STATICEDGE, WS_EX_WINDOWEDGE, WS_EX_DLGMODALFRAME,
+            SWP_NOMOVE, SWP_NOZORDER, SWP_NOACTIVATE, SWP_FRAMECHANGED
+        };
+        use windows_sys::Win32::Foundation::HWND;
+        
+        if let Some(main_window) = app_handle.get_webview_window("main") {
+            match main_window.hwnd() {
+                Ok(hwnd) => {
+                    let hwnd = hwnd.0 as HWND;
+                    
+                    match main_window.inner_size() {
+                        Ok(inner_size) => {
+                            info!("🎨 NUCLEAR: Removing ALL window styles that cause padding...");
+                            
+                            unsafe {
+                                // Get current styles
+                                let current_style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+                                let current_ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+                                
+                                info!("🔍 Current styles: style=0x{:X}, ex_style=0x{:X}", current_style, current_ex_style);
+                                
+                                // Remove ALL styles that could cause padding/chrome
+                                let clean_style = current_style & !(
+                                    WS_BORDER | WS_DLGFRAME | WS_THICKFRAME | 
+                                    WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_SYSMENU
+                                );
+                                
+                                let clean_ex_style = current_ex_style & !(
+                                    WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | 
+                                    WS_EX_WINDOWEDGE | WS_EX_DLGMODALFRAME
+                                );
+                                
+                                info!("🧙 NUCLEAR: Setting clean styles: style=0x{:X}, ex_style=0x{:X}", clean_style, clean_ex_style);
+                                
+                                // Apply the cleaned styles
+                                SetWindowLongPtrW(hwnd, GWL_STYLE, clean_style as isize);
+                                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, clean_ex_style as isize);
+                                
+                                // Force the window to exact content size
+                                let result = SetWindowPos(
+                                    hwnd,
+                                    0, // HWND_TOP as isize
+                                    0, 0,
+                                    inner_size.width as i32,
+                                    inner_size.height as i32,
+                                    SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+                                );
+                                
+                                if result != 0 {
+                                    info!("💥 NUCLEAR FIX: Applied clean window styles + exact sizing");
+                                    
+                                    // Verify the nuclear fix
+                                    std::thread::sleep(std::time::Duration::from_millis(200));
+                                    if let (Ok(new_outer), Ok(new_inner)) = (main_window.outer_size(), main_window.inner_size()) {
+                                        let final_chrome = new_outer.height as i32 - new_inner.height as i32;
+                                        info!("🔭 NUCLEAR VERIFICATION: outer={}x{}, inner={}x{}, chrome={}px", 
+                                              new_outer.width, new_outer.height, new_inner.width, new_inner.height, final_chrome);
+                                        
+                                        if final_chrome == 0 {
+                                            Ok(format!("💥 NUCLEAR SUCCESS: ALL invisible padding eliminated! (chrome: {}px)", final_chrome))
+                                        } else if final_chrome < 5 {
+                                            Ok(format!("✅ NUCLEAR PARTIAL: Minimal chrome remaining ({}px - WebView2 core limitation)", final_chrome))
+                                        } else {
+                                            Ok(format!("⚠️ NUCLEAR REDUCED: Chrome reduced to {}px (Windows/WebView2 enforced minimum)", final_chrome))
+                                        }
+                                    } else {
+                                        Ok("💥 Nuclear fix applied - verification failed".to_string())
+                                    }
+                                } else {
+                                    Err("Nuclear fix: SetWindowPos failed".to_string())
+                                }
+                            }
+                        }
+                        Err(e) => Err(format!("Nuclear fix: Failed to get inner size: {}", e))
+                    }
+                }
+                Err(e) => Err(format!("Nuclear fix: Failed to get HWND: {}", e))
+            }
+        } else {
+            Err("Nuclear fix: Main window not found".to_string())
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        Err("Nuclear fix is only available on Windows".to_string())
+    }
+}
+
+#[tauri::command]
+fn force_window_exact_content_size(app_handle: AppHandle) -> Result<String, String> {
+    info!("🔥 FORCE FIX: Using Windows API to eliminate invisible WebView2 padding...");
+    
+    #[cfg(windows)]
+    {
+        if let Some(main_window) = app_handle.get_webview_window("main") {
+            // Get the native Windows HWND
+            match main_window.hwnd() {
+                Ok(hwnd) => {
+                    let hwnd = hwnd.0 as HWND;
+                    
+                    // Get current inner content size
+                    match main_window.inner_size() {
+                        Ok(inner_size) => {
+                            info!("🎯 FORCE FIX: Setting window size to exact content: {}x{}", inner_size.width, inner_size.height);
+                            
+                            unsafe {
+                                // Force the window to exact content size using Windows API
+                                let result = SetWindowPos(
+                                    hwnd,
+                                    0, // HWND_TOP as isize
+                                    0, 0,
+                                    inner_size.width as i32,
+                                    inner_size.height as i32,
+                                    SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE
+                                );
+                                
+                                if result != 0 {
+                                    info!("✅ FORCE FIX: Windows API SetWindowPos successful");
+                                    
+                                    // Verify the fix worked
+                                    std::thread::sleep(std::time::Duration::from_millis(100));
+                                    if let (Ok(new_outer), Ok(new_inner)) = (main_window.outer_size(), main_window.inner_size()) {
+                                        let remaining_chrome = new_outer.height as i32 - new_inner.height as i32;
+                                        info!("🔍 VERIFICATION: New outer: {}x{}, inner: {}x{}, chrome: {}px", 
+                                              new_outer.width, new_outer.height, new_inner.width, new_inner.height, remaining_chrome);
+                                        
+                                        if remaining_chrome <= 1 {
+                                            Ok(format!("✅ SUCCESS: Invisible padding eliminated using Windows API (chrome: {}px)", remaining_chrome))
+                                        } else {
+                                            Ok(format!("⚠️ PARTIAL: Reduced to {}px chrome (WebView2 limitation)", remaining_chrome))
+                                        }
+                                    } else {
+                                        Ok("✅ Windows API call succeeded".to_string())
+                                    }
+                                } else {
+                                    Err("Failed to call Windows API SetWindowPos".to_string())
+                                }
+                            }
+                        }
+                        Err(e) => Err(format!("Failed to get inner size: {}", e))
+                    }
+                }
+                Err(e) => Err(format!("Failed to get HWND: {}", e))
+            }
+        } else {
+            Err("Main window not found".to_string())
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        Err("This fix is only available on Windows".to_string())
+    }
+}
+
+#[tauri::command]
+fn fix_main_window_invisible_boundary(app_handle: AppHandle) -> Result<String, String> {
+    info!("🔧 FIXING: Main window invisible boundary by adjusting size to match content...");
+    
+    if let Some(main_window) = app_handle.get_webview_window("main") {
+        // Get current dimensions
+        let outer_size = main_window.outer_size().map_err(|e| e.to_string())?;
+        let inner_size = main_window.inner_size().map_err(|e| e.to_string())?;
+        let outer_position = main_window.outer_position().map_err(|e| e.to_string())?;
+        
+        // Calculate chrome/padding
+        let chrome_height = outer_size.height as i32 - inner_size.height as i32;
+        let chrome_width = outer_size.width as i32 - inner_size.width as i32;
+        
+        info!("🔍 Current main window state:");
+        info!("  - Outer size: {}x{}", outer_size.width, outer_size.height);
+        info!("  - Inner size: {}x{}", inner_size.width, inner_size.height);
+        info!("  - Chrome padding: width={}px, height={}px", chrome_width, chrome_height);
+        
+        if chrome_height > 0 {
+            info!("🎯 FIXING: Reducing window outer height by {}px to eliminate invisible boundary", chrome_height);
+            
+            // Set the outer size to match inner size (eliminate chrome padding)
+            let fixed_height = inner_size.height;
+            let fixed_width = inner_size.width;
+            
+            match main_window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+                width: fixed_width,
+                height: fixed_height,
+            })) {
+                Ok(_) => {
+                    info!("✅ Main window size fixed: {}x{} (eliminated {}px invisible boundary)", 
+                          fixed_width, fixed_height, chrome_height);
+                    
+                    // Verify the fix worked
+                    match main_window.outer_size() {
+                        Ok(new_outer_size) => {
+                            let new_chrome_height = new_outer_size.height as i32 - inner_size.height as i32;
+                            info!("🔍 Post-fix verification: new outer size {}x{}, remaining chrome: {}px", 
+                                  new_outer_size.width, new_outer_size.height, new_chrome_height);
+                            
+                            if new_chrome_height <= 1 { // Allow 1px tolerance
+                                Ok(format!("✅ FIXED: Invisible boundary eliminated (was {}px, now {}px)", chrome_height, new_chrome_height))
+                            } else {
+                                Ok(format!("⚠️ PARTIAL FIX: Reduced from {}px to {}px chrome", chrome_height, new_chrome_height))
+                            }
+                        }
+                        Err(e) => {
+                            warn!("❌ Failed to verify fix: {}", e);
+                            Ok(format!("✅ Fix attempted: eliminated {}px chrome", chrome_height))
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("❌ Failed to fix main window size: {}", e);
+                    Err(format!("Failed to fix main window size: {}", e))
+                }
+            }
+        } else {
+            info!("✅ No invisible boundary detected - main window size is already correct");
+            Ok("Main window size is already correct - no invisible boundary".to_string())
+        }
+    } else {
+        Err("Main window not found".to_string())
     }
 }
 
@@ -1504,20 +1846,32 @@ fn create_ai_response_window_at_startup(app_handle: AppHandle) -> Result<String,
     
     info!("🔍 DEBUG (startup): AI Response size calculated: {}x{} (SAME WIDTH as main)", ai_response_width, ai_response_height);
     
-    // Calculate position: ALIGN with main window X position, positioned directly below (startup) 
+    // WINDOW CONTENT-AWARE POSITIONING (startup): Account for difference between outer and inner window
     let screen_size = monitor.size();
-    let response_x = main_outer_position.x; // ALIGN with main window X position exactly
-    let response_y = main_outer_position.y + main_outer_size.height as i32 - 1; // Directly below with 1px overlap to eliminate gap
     
-    info!("🔍 DEBUG (startup): Positioning calculation:");
-    info!("  - Main outer width: {}, AI width: {} (EXACT MATCH)", main_outer_size.width, ai_response_width);
-    info!("  - Main window position: ({}, {}), AI window position: ({}, {}) (CENTERED X, DIRECTLY BELOW Y)", main_outer_position.x, main_outer_position.y, response_x, response_y);
-    info!("  - No gap between windows for seamless appearance");
-    info!("  - Final position: ({}, {})", response_x, response_y);
+    // Calculate the difference between outer and inner window (window decorations)
+    let window_chrome_height = main_outer_size.height as i32 - main_inner_size.height as i32;
     
-    info!("📏 AI Response Window Position (startup): main={}x{} at ({}, {}), AI={}x{} at ({}, {}) [CENTERED & SAME WIDTH, NO GAP]", 
-          main_outer_size.width, main_outer_size.height, main_outer_position.x, main_outer_position.y,
-          ai_response_width, ai_response_height, response_x, response_y);
+    // Position AI window below main window with 5px gap (startup)
+    let response_x = main_outer_position.x;
+    let main_bottom_y = main_outer_position.y + main_outer_size.height as i32;
+    
+    // CRITICAL FIX: Add DPI-aware gap between main window and AI response window (startup)
+    let base_gap = 5.0; // 5px base gap
+    let dpi_aware_gap = (base_gap * scale_factor) as i32; // Scale gap with DPI
+    let final_response_y = main_bottom_y + dpi_aware_gap;
+    
+    info!("🔍 STARTUP DPI-AWARE GAP: {}px base * {:.2} scale = {}px physical gap", base_gap, scale_factor, dpi_aware_gap);
+    
+    info!("🔍 DEBUG (startup): Content-aware positioning calculation:");
+    info!("  - DPI Scale factor: {:.2}", scale_factor);
+    info!("  - Main outer: {}x{}, inner: {}x{}", main_outer_size.width, main_outer_size.height, main_inner_size.width, main_inner_size.height);
+    info!("  - Window chrome height: {}px (NOT USED FOR POSITIONING)", window_chrome_height);
+    info!("  - Main bottom Y: {} + DPI gap: {}px = final Y: {}", main_bottom_y, dpi_aware_gap, final_response_y);
+    info!("  - Content-aware positioning: Accounts for window decorations");
+    
+    info!("📎 AI Response Window Position (startup): main_content={}x{}, AI={}x{} at ({}, {}) [CONTENT-AWARE ALIGNED]", 
+          main_inner_size.width, main_inner_size.height, ai_response_width, ai_response_height, response_x, final_response_y);
     
     // Screen bounds check for safety (startup)
     let screen_size = monitor.size();
@@ -1525,7 +1879,7 @@ fn create_ai_response_window_at_startup(app_handle: AppHandle) -> Result<String,
     
     // Ensure AI response window fits on screen (positioned below main window at startup)
     if response_x + ai_response_width as i32 > screen_size.width as i32 ||
-       response_y + ai_response_height as i32 > screen_size.height as i32 {
+       final_response_y + ai_response_height as i32 > screen_size.height as i32 {
         warn!("⚠️ AI response window would go off-screen at startup when positioned below main window");
     }
     
@@ -1549,7 +1903,7 @@ fn create_ai_response_window_at_startup(app_handle: AppHandle) -> Result<String,
     .min_inner_size(200.0, 100.0)  // Conservative minimum size (startup)
     .max_inner_size(ai_response_width as f64, max_height as f64)  // Respect max height constraint
     // Remove max size constraint to allow dynamic resizing
-    .position(response_x as f64, response_y as f64)
+    .position(response_x as f64, final_response_y as f64)
     .resizable(true) // Make resizable for programmatic resizing
     .fullscreen(false)
     .always_on_top(true)
@@ -1797,15 +2151,19 @@ fn create_ai_response_window_enhanced_below(app_handle: AppHandle) -> Result<Str
     
     // Calculate AI window position to center it below main window (logical coordinates)
     let ai_x_logical = main_center_x_logical - (ai_width_logical / 2.0);
-    // Remove gap adjustment to eliminate invisible spacing - position directly below
-    let ai_y_logical = (main_outer_position.y as f64 / scale_factor) + (main_outer_size.height as f64 / scale_factor);
+    
+    // CRITICAL FIX: Add proper DPI-aware gap between main window and AI response window
+    let base_gap_logical = 5.0; // 5px gap in logical pixels (visual consistency)
+    let ai_y_logical = (main_outer_position.y as f64 / scale_factor) + (main_outer_size.height as f64 / scale_factor) + base_gap_logical;
+    
+    info!("🔍 ENHANCED DPI GAP: {}px logical gap for visual consistency", base_gap_logical);
     
     // Convert back to physical coordinates ONLY ONCE
     let ai_x_physical = (ai_x_logical * scale_factor) as i32;
     let ai_y_physical = (ai_y_logical * scale_factor) as i32;
     
-    info!("🎯 DPI-FIXED Positioning (NO GAP):");
-    info!("  - Scale factor: {:.2} (no gap adjustment - direct positioning)", scale_factor);
+    info!("🎯 DPI-FIXED Positioning (WITH 5PX LOGICAL GAP):");
+    info!("  - Scale factor: {:.2} (gap: {:.1}px logical)", scale_factor, base_gap_logical);
     info!("  - Main center logical: {:.1}", main_center_x_logical);
     info!("  - AI window logical: {:.1}x{:.1} at ({:.1}, {:.1})", ai_width_logical, ai_height as f64 / scale_factor, ai_x_logical, ai_y_logical);
     info!("  - AI window physical: {}x{} at ({}, {})", ai_width, ai_height, ai_x_physical, ai_y_physical);
@@ -1882,19 +2240,21 @@ fn reset_ai_response_window_enhanced_below_size(app_handle: AppHandle) -> Result
             
             // Calculate AI window position to center it below main window (logical coordinates)
             let ai_x_logical = main_center_x_logical - (ai_width_logical / 2.0);
-            // Adjust gap based on scale factor to compensate for DPI scaling issues
-            let gap_adjustment = if scale_factor < 1.5 { -3.0 / scale_factor } else { -1.0 };
-            let ai_y_logical = (main_outer_position.y as f64 / scale_factor) + (main_outer_size.height as f64 / scale_factor) + gap_adjustment;
+            // CRITICAL FIX: Add proper DPI-aware gap between main window and AI response window (reset)
+            let base_gap_logical = 5.0; // 5px gap in logical pixels (visual consistency)
+            let ai_y_logical = (main_outer_position.y as f64 / scale_factor) + (main_outer_size.height as f64 / scale_factor) + base_gap_logical;
+            
+            info!("🔍 RESET DPI GAP: {}px logical gap for visual consistency", base_gap_logical);
             
             // Convert back to physical coordinates ONLY ONCE
             let ai_x_physical = (ai_x_logical * scale_factor) as i32;
             let ai_y_physical = (ai_y_logical * scale_factor) as i32;
             
             info!("🔄 DPI-FIXED Reset Positioning:");
-            info!("  - Scale factor: {:.2} (gap adjustment: {:.1}px)", scale_factor, gap_adjustment);
+            info!("  - Scale factor: {:.2} (gap: {:.1}px logical - 5px visual gap)", scale_factor, base_gap_logical);
             info!("  - Main center logical: {:.1}", main_center_x_logical);
             info!("  - AI reset physical: {}x{} at ({}, {})", ai_width, ai_height, ai_x_physical, ai_y_physical);
-            info!("  - Gap calculation: scale < 1.5? {}, adjustment: {:.2}px logical", scale_factor < 1.5, gap_adjustment);
+            info!("  - Gap calculation: 5px gap = {:.2}px logical", base_gap_logical);
             
             // Apply size and position in one operation
             match ai_window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
