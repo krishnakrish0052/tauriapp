@@ -627,6 +627,19 @@ async fn pollinations_generate_answer_streaming(
             if let Err(e) = app_handle_clone.emit("ai-stream-token", &token_payload) {
                 warn!("Failed to emit streaming token: {}", e);
             }
+            
+            // ALSO send token to AI response window for display
+            let ai_response_data = AiResponseData {
+                message_type: "stream-token".to_string(),
+                text: Some(token.to_string()),
+                error: None,
+            };
+            let app_handle_for_ai_window = app_handle_clone.clone();
+            tokio::spawn(async move {
+                if let Err(e) = send_ai_response_data(app_handle_for_ai_window, ai_response_data).await {
+                    warn!("Failed to send streaming token to AI response window: {}", e);
+                }
+            });
         }
     ).await;
     
@@ -1250,64 +1263,45 @@ fn create_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
     
     info!("🔍 DEBUG: DPI Scale factor: {}", scale_factor);
     
-    // Get main window measurements - use INNER for consistent sizing
-    let main_inner_position = main_window.inner_position().map_err(|e| e.to_string())?;
-    let main_inner_size = main_window.inner_size().map_err(|e| e.to_string())?;
+    // Get main window measurements - use OUTER for positioning alignment
+    let main_outer_position = main_window.outer_position().map_err(|e| e.to_string())?;
     let main_outer_size = main_window.outer_size().map_err(|e| e.to_string())?;
+    let main_inner_size = main_window.inner_size().map_err(|e| e.to_string())?;
     
-    info!("🔍 DEBUG: Main window - inner: {}x{} at ({}, {}), outer: {}x{}", 
-          main_inner_size.width, main_inner_size.height, main_inner_position.x, main_inner_position.y,
-          main_outer_size.width, main_outer_size.height);
+    info!("🔍 DEBUG: Main window - outer: {}x{} at ({}, {}), inner: {}x{}", 
+          main_outer_size.width, main_outer_size.height, main_outer_position.x, main_outer_position.y,
+          main_inner_size.width, main_inner_size.height);
     
-    // Calculate AI response window size - SAME WIDTH as main window's INNER content
+    // Calculate AI response window size - SAME WIDTH as main window's OUTER size
     let max_height = 550u32; // Maximum height constraint
     
-    // Use main window INNER width for exact content width match
-    let ai_response_width = main_inner_size.width;
+    // Use main window OUTER width for exact width match
+    let ai_response_width = main_outer_size.width;
     let ai_response_height = 550u32; // Fixed default height of 550px
     
-    info!("🔍 DEBUG: AI Response size calculated: {}x{} (SAME INNER WIDTH as main)", ai_response_width, ai_response_height);
+    info!("🔍 DEBUG: AI Response size calculated: {}x{} (SAME OUTER WIDTH as main)", ai_response_width, ai_response_height);
     
     // Get screen size first for positioning calculations
     let screen_size = monitor.size();
     
-    // FIXED DPI-aware positioning: work in logical coordinates, then convert once at the end
-    // Convert screen size to logical coordinates
-    let logical_screen_width = (screen_size.width as f64) / scale_factor;
-    let logical_screen_height = (screen_size.height as f64) / scale_factor;
+    // ALIGN with main window positioning: X exactly aligned, Y directly below with 1px overlap
+    let response_x = main_outer_position.x; // ALIGN with main window X position exactly
+    let response_y = main_outer_position.y + main_outer_size.height as i32 - 1; // Directly below with 1px overlap to eliminate gap
     
-    // Window dimensions are already in physical pixels, convert to logical
-    let logical_window_width = ai_response_width as f64 / scale_factor;
-    let logical_window_height = ai_response_height as f64 / scale_factor;
-    
-    // Calculate center position in LOGICAL coordinates
-    let logical_x = (logical_screen_width - logical_window_width) / 2.0;
-    let logical_y = (logical_screen_height - logical_window_height) / 2.0;
-    
-    // Now convert logical position to physical for Tauri (only once!)
-    let physical_x = (logical_x * scale_factor) as i32;
-    let physical_y = (logical_y * scale_factor) as i32;
-    
-    // Window size stays as-is (already in physical pixels)
+    // Window size 
     let physical_width = ai_response_width;
     let physical_height = ai_response_height;
     
-    // Use the physical coordinates for positioning
-    let response_x = physical_x;
-    let response_y = physical_y;
-    
-    info!("🔍 DEBUG: FIXED DPI-aware centering calculation:");
+    info!("🔍 DEBUG: AI Response Window Alignment:");
     info!("  - Screen size (physical): {}x{}", screen_size.width, screen_size.height);
     info!("  - DPI Scale factor: {:.2}", scale_factor);
-    info!("  - Screen size (logical): {:.0}x{:.0}", logical_screen_width, logical_screen_height);
-    info!("  - AI window logical size: {:.1}x{:.1}", logical_window_width, logical_window_height);
-    info!("  - Logical center position: ({:.1}, {:.1})", logical_x, logical_y);
-    info!("  - Physical window size: {}x{}", physical_width, physical_height);
-    info!("  - Physical center position: ({}, {})", response_x, response_y);
-    info!("  - FIXED: Single DPI conversion at the end");
+    info!("  - Main window outer: {}x{} at ({}, {})", main_outer_size.width, main_outer_size.height, main_outer_position.x, main_outer_position.y);
+    info!("  - AI window size: {}x{}", physical_width, physical_height);
+    info!("  - AI window position: ({}, {}) - ALIGNED with main window", response_x, response_y);
+    info!("  - Gap elimination: 1px overlap for seamless connection");
     
-    info!("📐 AI Response Window Position: main_inner={}x{} at ({}, {}), AI={}x{} at ({}, {}) [ALIGNED X & SAME WIDTH, BELOW MAIN]", 
-          main_inner_size.width, main_inner_size.height, main_inner_position.x, main_inner_position.y,
+    info!("📏 AI Response Window Position: main_outer={}x{} at ({}, {}), AI={}x{} at ({}, {}) [PERFECTLY ALIGNED, NO GAP]", 
+          main_outer_size.width, main_outer_size.height, main_outer_position.x, main_outer_position.y,
           ai_response_width, ai_response_height, response_x, response_y);
     
     // Screen bounds check for safety (screen_size already obtained above)
@@ -1510,10 +1504,10 @@ fn create_ai_response_window_at_startup(app_handle: AppHandle) -> Result<String,
     
     info!("🔍 DEBUG (startup): AI Response size calculated: {}x{} (SAME WIDTH as main)", ai_response_width, ai_response_height);
     
-    // Calculate position: CENTER X on screen, positioned directly below main window (startup)
+    // Calculate position: ALIGN with main window X position, positioned directly below (startup) 
     let screen_size = monitor.size();
-    let response_x = (screen_size.width as i32 - ai_response_width as i32) / 2; // CENTER on screen horizontally
-    let response_y = main_outer_position.y + main_outer_size.height as i32; // Directly below main window (no gap)
+    let response_x = main_outer_position.x; // ALIGN with main window X position exactly
+    let response_y = main_outer_position.y + main_outer_size.height as i32 - 1; // Directly below with 1px overlap to eliminate gap
     
     info!("🔍 DEBUG (startup): Positioning calculation:");
     info!("  - Main outer width: {}, AI width: {} (EXACT MATCH)", main_outer_size.width, ai_response_width);

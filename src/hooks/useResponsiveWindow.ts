@@ -154,7 +154,7 @@ export const useResponsiveWindow = (config: Partial<ResponsiveConfig> = {}) => {
       case 'main':
         // Use reduced width (25% smaller) for consistency
         targetWidth = Math.min(baseWidth, 600); // Reduced from 800px to 600px
-        targetHeight = contentExpanded ? 400 : 110;
+        targetHeight = contentExpanded ? 500 : 180; // Increased from 110 to 180 for dropdown visibility
         break;
       default:
         targetWidth = baseWidth;
