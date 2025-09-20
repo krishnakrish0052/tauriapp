@@ -875,10 +875,9 @@ Provide only the JSON response, no other text.",
             return Err(anyhow::anyhow!(error_msg));
         }
         
-        // Try different endpoints for better reliability, fastest first
+        // Use the correct GET streaming endpoint
         let endpoints = vec![
-            "https://text.pollinations.ai",         // Direct endpoint (often faster)
-            "https://text.pollinations.ai/openai",  // OpenAI-compatible endpoint
+            "https://text.pollinations.ai",         // GET endpoint for streaming
         ];
         
         let mut last_error = None;
@@ -914,9 +913,39 @@ Provide only the JSON response, no other text.",
         Err(final_error)
     }
 
+    // Helper method to process streaming tokens with consistent logging
+    fn process_streaming_token<F>(
+        &self,
+        content: &str,
+        first_token_time: &mut Option<std::time::Instant>,
+        start_time: std::time::Instant,
+        on_token: &mut F,
+        full_response: &mut String,
+    )
+    where
+        F: FnMut(&str) + Send,
+    {
+        // Track first token timing
+        if first_token_time.is_none() {
+            *first_token_time = Some(std::time::Instant::now());
+            let time_to_first_token = start_time.elapsed();
+            info!("⚡ First token received in {:?}", time_to_first_token);
+        }
+        
+        // Send token with optimized logging
+        if content.len() <= 20 {
+            debug!("📤 Token: '{}' ({})", content, content.len());
+        } else {
+            debug!("📤 Token: {}chars", content.len());
+        }
+        
+        on_token(content);
+        full_response.push_str(content);
+    }
+
     async fn try_streaming_with_endpoint<F>(
         &self,
-        _base_url: &str,
+        base_url: &str,
         question: &str,
         context: &super::openai::InterviewContext,
         model: &PollinationsModel,
@@ -926,125 +955,103 @@ Provide only the JSON response, no other text.",
         F: FnMut(&str) + Send,
     {
         let system_prompt = self.build_system_prompt(context);
-        let prompt = format!("{}
+        let full_prompt = format!("{} Question: {}", system_prompt, question);
 
-Q: {}
-
-A:", system_prompt, question);
-
-        info!("🚀 Generating streaming answer with Pollinations model: {} (optimized for speed)", model.as_str());
+        info!("🚀 Using Pollinations GET streaming API with model: {}", model.as_str());
         let start_time = std::time::Instant::now();
         
-        // Get API key and referrer from environment
-        let api_key = std::env::var("POLLINATIONS_API_KEY")
-            .unwrap_or_default();
+        // Get referrer from environment for seed tier access
         let referrer = std::env::var("POLLINATIONS_REFERER")
             .unwrap_or_else(|_| "mockmate".to_string());
 
-        // Optimized messages for speed and quality
-        let messages = vec![
-            serde_json::json!({
-                "role": "system",
-                "content": "You are a helpful AI assistant. Respond quickly and clearly."
-            }),
-            serde_json::json!({
-                "role": "user",
-                "content": prompt
-            })
-        ];
-
-        // Optimize parameters based on model type for maximum speed
-        let (temperature, max_tokens, top_p) = match model.as_str() {
-            // Ultra-fast models (anonymous tier)
-            "nova-fast" => (0.1, 120, 0.7),          // Amazon Nova Micro (ultra-fast)
-            "openai-fast" => (0.1, 130, 0.75),       // OpenAI GPT-4.1 Nano (fast)
-            "gemini" => (0.2, 150, 0.8),             // Gemini 2.5 Flash Lite (vision)
-            "qwen-coder" => (0.2, 160, 0.8),         // Qwen Coder (specialized)
-            // Balanced models
-            "mistral" => (0.3, 200, 0.9),            // Mistral Small 3.1 24B
-            "openai" => (0.3, 250, 0.9),             // OpenAI GPT-5 Nano (vision)
-            "bidara" => (0.3, 220, 0.85),            // NASA BIDARA (vision)
-            "midijourney" => (0.4, 180, 0.9),        // MIDIjourney
-            // Premium models (seed tier)
-            "deepseek-reasoning" => (0.1, 300, 0.8), // DeepSeek R1 (reasoning)
-            "openai-reasoning" => (0.1, 280, 0.8),   // OpenAI o4-mini (reasoning + vision)
-            "openai-audio" => (0.3, 250, 0.9),       // Audio + vision model
-            "roblox-rp" => (0.3, 200, 0.85),         // Llama 3.1 8B
-            "mirexa" => (0.4, 230, 0.9),             // Mirexa AI Companion (vision)
-            "rtist" => (0.4, 200, 0.9),              // Rtist
-            // Uncensored models
-            "evil" => (0.4, 220, 0.9),               // Evil (uncensored + vision)
-            "unity" => (0.3, 240, 0.9),              // Unity Unrestricted (vision)
-            // Legacy compatibility
-            "llama-fast-roblox" | "llama-roblox" => (0.3, 180, 0.85),
-            _ => (0.3, 200, 0.9),                     // Default balanced settings
+        // Optimize parameters based on model type for maximum streaming speed
+        let (temperature, top_p, presence_penalty, frequency_penalty) = match model.as_str() {
+            // Ultra-fast models (anonymous tier) - aggressive speed settings
+            "nova-fast" => ("0.1", "0.7", "0.0", "0.0"),
+            "openai-fast" => ("0.1", "0.75", "0.0", "0.0"),
+            "gemini" => ("0.2", "0.8", "0.0", "0.0"),
+            "qwen-coder" => ("0.2", "0.8", "0.0", "0.0"),
+            // Balanced models - optimized for streaming
+            "mistral" => ("0.3", "0.9", "0.0", "0.0"),
+            "openai" => ("0.3", "0.9", "0.0", "0.0"),
+            "roblox-rp" => ("0.3", "0.85", "0.0", "0.0"),
+            // Premium models - balanced for quality and speed
+            "deepseek-reasoning" => ("0.1", "0.8", "0.0", "0.0"),
+            "openai-reasoning" => ("0.1", "0.8", "0.0", "0.0"),
+            _ => ("0.3", "0.9", "0.0", "0.0"), // Default optimized settings
         };
-        
-        let mut payload = serde_json::json!({
-            "model": model.as_str(),
-            "messages": messages,
-            "stream": true,
-            "private": true,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "top_p": top_p,
-            "presence_penalty": 0.0,
-            "frequency_penalty": 0.0
-        });
-        
-        // Add speed optimizations for fast models
-        let is_fast_model = matches!(model.as_str(), 
-            "nova-fast" | "gemini" | "deepseek-reasoning") || 
-            model.as_str().contains("fast");
-            
-        if is_fast_model {
-            payload["seed"] = serde_json::Value::Number(serde_json::Number::from(42));
-            payload["best_of"] = serde_json::Value::Number(serde_json::Number::from(1));
-            // Additional speed optimization
-            payload["stream"] = serde_json::Value::Bool(true);
-        }
 
-        let url = format!("{}/openai", self.base_url);
-        info!("Pollinations streaming POST request to: {}", url);
+        // URL encode the prompt for GET request
+        let encoded_prompt = urlencoding::encode(&full_prompt).to_string();
         
-        // Add referrer to payload for seed tier access
-        let mut final_payload = payload;
-        if !referrer.is_empty() {
-            final_payload["referrer"] = serde_json::Value::String(referrer.clone());
+        // Build the streaming URL with all parameters
+        let mut url = format!("{}/{}", base_url, encoded_prompt);
+        
+        // Add query parameters for streaming configuration
+        let query_params = vec![
+            ("model", model.as_str()),
+            ("stream", "true"),              // CRITICAL: Enable SSE streaming
+            ("private", "true"),             // Keep response private
+            ("temperature", temperature),
+            ("top_p", top_p),
+            ("presence_penalty", presence_penalty),
+            ("frequency_penalty", frequency_penalty),
+            ("referrer", &referrer),          // For seed tier access
+        ];
+        
+        // Build query string
+        let query_string: Vec<String> = query_params
+            .iter()
+            .map(|(key, value)| format!("{}={}", key, urlencoding::encode(value)))
+            .collect();
+        
+        if !query_string.is_empty() {
+            url = format!("{}?{}", url, query_string.join("&"));
         }
-
-        let mut request_builder = self.client.post(&url)
-            .header("Content-Type", "application/json")
+        
+        info!("🌊 Pollinations streaming GET request to: {}", url.chars().take(100).collect::<String>() + "...");
+        
+        // Create optimized GET request for SSE streaming
+        let request_builder = self.client.get(&url)
             .header("User-Agent", "MockMate/1.0")
-            .header("Accept", "text/event-stream")
+            .header("Accept", "text/event-stream")     // Accept SSE
             .header("Cache-Control", "no-cache")
             .header("Connection", "keep-alive")
-            .header("X-Requested-With", "MockMate")
-            .header("Referer", referrer.as_str())  // Add referrer header for seed tier
-            .json(&final_payload);
-
-        // Add Bearer token if available
-        if !api_key.is_empty() {
-            request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
-        }
+            .header("Referer", referrer.as_str());    // For seed tier access
 
         let response = request_builder.send().await?;
         let request_time = start_time.elapsed();
-        info!("📡 Request sent to Pollinations API in {:?}", request_time);
+        info!("📡 GET streaming request sent in {:?}", request_time);
 
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            error!("❌ Pollinations streaming API error {}: {}", status, error_text);
-            return Err(anyhow::anyhow!("Pollinations streaming API error {}: {}", status, error_text));
+            error!("❌ Pollinations GET streaming API error {}: {}", status, error_text);
+            return Err(anyhow::anyhow!("Pollinations GET streaming API error {}: {}", status, error_text));
         }
         
-        info!("✅ Pollinations API responded with status: {}", response.status());
+        info!("✅ Pollinations GET streaming API responded: {} (Content-Type: {:?})", 
+              response.status(), 
+              response.headers().get("content-type"));
+              
+        // Check if we're actually getting a streaming response
+        let content_type = response.headers()
+            .get("content-type")
+            .and_then(|ct| ct.to_str().ok())
+            .unwrap_or("")
+            .to_string(); // Clone the content type to avoid borrowing issue
+            
+        if !content_type.contains("text/event-stream") && !content_type.contains("text/plain") {
+            warn!("⚠️ Unexpected content type for streaming: {}", content_type);
+        }
 
+        let is_sse_format = content_type.contains("text/event-stream");
         let mut stream = response.bytes_stream();
         let mut full_response = String::new();
         let mut buffer = String::new();
         let mut first_token_time: Option<std::time::Instant> = None;
+        
+        info!("🌊 Starting to process streaming response (SSE format: {})", is_sse_format);
 
         while let Some(chunk) = stream.next().await {
             match chunk {
@@ -1052,52 +1059,43 @@ A:", system_prompt, question);
                     let text = String::from_utf8_lossy(&bytes);
                     buffer.push_str(&text);
                     
-                    // Process complete lines in buffer with immediate flushing
-                    while let Some(newline_pos) = buffer.find('\n') {
-                        let line = buffer[..newline_pos].trim().to_string();
-                        buffer.drain(..newline_pos + 1);
-                        
-                        if let Some(content) = self.parse_sse_line(&line) {
-                            if content == "[DONE]" {
-                                debug!("SSE stream completed with [DONE]");
-                                return Ok(full_response);
-                            }
+                    if is_sse_format {
+                        // Process SSE format with data: lines
+                        while let Some(newline_pos) = buffer.find('\n') {
+                            let line = buffer[..newline_pos].trim().to_string();
+                            buffer.drain(..newline_pos + 1);
                             
-                            if !content.is_empty() {
-                                // Track first token timing
-                                if first_token_time.is_none() {
-                                    first_token_time = Some(std::time::Instant::now());
-                                    let time_to_first_token = start_time.elapsed();
-                                    info!("⚡ First token received in {:?}", time_to_first_token);
+                            if let Some(content) = self.parse_sse_line(&line) {
+                                if content == "[DONE]" {
+                                    debug!("🏁 SSE stream completed with [DONE]");
+                                    return Ok(full_response);
                                 }
                                 
-                                // Send individual token immediately for progressive display
-                                // Optimize for speed: reduce debug logging for better performance
-                                if content.len() <= 50 {
-                                    debug!("📤 Token: '{}' ({})", content.chars().take(20).collect::<String>(), content.len());
-                                } else {
-                                    debug!("📤 Token: {}chars", content.len());
+                                if !content.is_empty() {
+                                    self.process_streaming_token(&content, &mut first_token_time, start_time, on_token, &mut full_response);
                                 }
-                                on_token(&content);
-                                full_response.push_str(&content);
                             }
                         }
-                    }
-                    
-                    // Also try to process partial lines for immediate response
-                    if !buffer.is_empty() && !buffer.contains('\n') {
-                        // Check if buffer contains a complete token without newline
-                        if let Some(content) = self.try_parse_partial_sse(&buffer) {
-                            if !content.is_empty() {
-                                on_token(&content);
-                                full_response.push_str(&content);
-                                buffer.clear();
+                    } else {
+                        // Process plain text streaming format - character by character or word by word
+                        let chunk_text = text.to_string();
+                        if !chunk_text.trim().is_empty() {
+                            // Track first token timing
+                            if first_token_time.is_none() {
+                                first_token_time = Some(std::time::Instant::now());
+                                let time_to_first_token = start_time.elapsed();
+                                info!("⚡ First content received in {:?}", time_to_first_token);
                             }
+                            
+                            // For plain text, send the chunk directly - this should provide word-by-word streaming
+                            debug!("📤 Plain text chunk: '{}' ({})", chunk_text.chars().take(20).collect::<String>(), chunk_text.len());
+                            on_token(&chunk_text);
+                            full_response.push_str(&chunk_text);
                         }
                     }
                 }
                 Err(e) => {
-                    error!("Error reading SSE stream: {}", e);
+                    error!("Error reading streaming response: {}", e);
                     break;
                 }
             }
