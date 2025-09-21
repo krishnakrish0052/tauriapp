@@ -1,61 +1,86 @@
-/* Streaming AI Response Optimizations */
+/* Streaming AI Response Styles */
 
-/* Core streaming response styles with performance optimizations */
-.streaming-ai-response {
-  /* GPU acceleration for smooth text updates */
-  transform: translateZ(0);
-  backface-visibility: hidden;
-  perspective: 1000;
-  
-  /* Optimized font rendering */
-  font-feature-settings: "kern" 1;
-  text-rendering: optimizeSpeed;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  
-  /* Layout containment for better performance */
-  contain: layout style paint;
-  
-  /* Prevent text selection during streaming for better performance */
-  user-select: none;
-  -webkit-user-select: none;
-  -moz-user-select: none;
-  -ms-user-select: none;
-  
-  /* Optimized line height and spacing */
-  line-height: 1.5;
-  word-break: break-word;
-  overflow-wrap: break-word;
-  hyphens: auto;
-  
-  /* Smooth scrolling during content updates */
-  scroll-behavior: smooth;
+.streaming-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: linear-gradient(145deg, #1a1a1a 0%, #2d2d2d 100%);
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid #333;
+}
+
+.streaming-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #444;
+  margin-bottom: 16px;
+}
+
+.streaming-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.streaming-indicator {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #22c55e;
+  animation: pulse 2s infinite;
+}
+
+.streaming-indicator.loading {
+  background: #f59e0b;
+}
+
+.streaming-indicator.error {
+  background: #ef4444;
+  animation: none;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.streaming-content {
+  flex: 1;
   overflow-y: auto;
-  
-  /* Prevent layout shifts */
-  min-height: 1.5em;
-  
-  /* Subtle animation for content changes */
-  transition: opacity 0.1s ease-out;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+  border: 1px solid #333;
 }
 
-/* Active streaming state with enhanced performance */
-.streaming-ai-response.streaming-active {
-  /* Enable text selection after streaming completes */
-  user-select: text;
-  -webkit-user-select: text;
-  -moz-user-select: text;
-  -ms-user-select: text;
-  
-  /* Slightly increased line height for readability during streaming */
+.streaming-text {
+  color: #e5e5e5;
   line-height: 1.6;
-  
-  /* Enhanced GPU acceleration during active streaming */
-  will-change: contents;
-  transform: translate3d(0, 0, 0);
+  font-size: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
-/* Streaming cursor animation */
+.streaming-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.2em;
+  background-color: #22c55e;
+  margin-left: 2px;
+  animation: blink 1s infinite;
+}
+
 @keyframes blink {
   0%, 50% {
     opacity: 1;
@@ -65,98 +90,62 @@
   }
 }
 
-.streaming-cursor {
-  display: inline-block;
-  width: 2px;
-  height: 1.2em;
-  background-color: #60a5fa; /* Blue-400 */
-  animation: blink 1s infinite;
-  margin-left: 2px;
-  vertical-align: text-top;
+.streaming-stats {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 6px;
+  font-size: 12px;
+  color: #999;
 }
 
-/* Custom scrollbar for streaming content */
-.streaming-ai-response::-webkit-scrollbar {
-  width: 4px;
+.streaming-error {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+  padding: 12px;
+  border-radius: 8px;
+  margin: 8px 0;
 }
 
-.streaming-ai-response::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 2px;
+.streaming-controls {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
 }
 
-.streaming-ai-response::-webkit-scrollbar-thumb {
-  background: rgba(96, 165, 250, 0.5); /* Blue-400 with transparency */
-  border-radius: 2px;
-  transition: background-color 0.2s ease;
+.streaming-button {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid #444;
+  background: #2a2a2a;
+  color: #ffffff;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
 }
 
-.streaming-ai-response::-webkit-scrollbar-thumb:hover {
-  background: rgba(96, 165, 250, 0.8);
+.streaming-button:hover {
+  background: #3a3a3a;
+  border-color: #555;
 }
 
-/* Performance optimizations for containers */
-.streaming-container {
-  /* Layout containment */
-  contain: layout;
-  
-  /* Prevent unnecessary repaints */
-  transform: translateZ(0);
-  
-  /* Smooth resizing */
-  transition: height 0.2s ease-out;
+.streaming-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
-/* Optimize text appearance for better readability during streaming */
-.streaming-text {
-  /* Consistent character spacing */
-  letter-spacing: 0.025em;
-  
-  /* Optimized for fast rendering */
-  font-variant-ligatures: none;
-  font-feature-settings: "liga" 0;
-  
-  /* Prevent font loading delays */
-  font-display: swap;
-}
-
-/* Responsive optimizations for different screen sizes */
-@media (max-width: 768px) {
-  .streaming-ai-response {
-    /* Smaller line height on mobile for better use of space */
-    line-height: 1.4;
-    
-    /* Adjusted font size for mobile readability */
-    font-size: 0.9em;
-  }
-}
-
-/* High DPI display optimizations */
-@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
-  .streaming-ai-response {
-    /* Enhanced font smoothing for high DPI */
-    -webkit-font-smoothing: subpixel-antialiased;
-  }
-}
-
-/* Dark theme optimizations for better contrast during streaming */
-.dark .streaming-ai-response {
-  /* Slightly increased contrast for better readability */
-  color: rgba(255, 255, 255, 0.95);
-  
-  /* Enhanced text shadow for better definition */
-  text-shadow: 0 0 1px rgba(0, 0, 0, 0.5);
-}
-
-/* Animation for smooth text appearance */
+/* Token animation */
 .token-appear {
-  animation: tokenFadeIn 0.05s ease-out;
+  animation: tokenFadeIn 0.3s ease-in-out;
 }
 
 @keyframes tokenFadeIn {
   from {
-    opacity: 0.7;
-    transform: translateY(-1px);
+    opacity: 0;
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
@@ -164,32 +153,30 @@
   }
 }
 
-/* Disable animations on reduced motion preference */
-@media (prefers-reduced-motion: reduce) {
-  .streaming-ai-response,
-  .streaming-cursor,
-  .token-appear {
-    animation: none;
-    transition: none;
-  }
-  
-  .streaming-ai-response {
-    scroll-behavior: auto;
-  }
+/* Database status indicator */
+.db-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #666;
 }
 
-/* Performance optimizations for low-end devices */
-@media (max-resolution: 96dpi) {
-  .streaming-ai-response {
-    /* Simplified rendering for low-end devices */
-    text-rendering: auto;
-    -webkit-font-smoothing: auto;
-    transform: none;
-    will-change: auto;
-  }
-  
-  .streaming-ai-response.streaming-active {
-    transform: none;
-    will-change: auto;
-  }
+.db-status.saved {
+  color: #22c55e;
+}
+
+.db-status.saving {
+  color: #f59e0b;
+}
+
+.db-status.error {
+  color: #ef4444;
+}
+
+.db-status-icon {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
 }

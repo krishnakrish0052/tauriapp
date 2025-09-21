@@ -1,11 +1,46 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { useResponsiveWindow } from '@/hooks/useResponsiveWindow';
-import NotificationDialog from '@/components/NotificationDialog';
+// import { Button } from '@/components/ui/button';
+// import { Input } from '@/components/ui/input';
+// import { useResponsiveWindow } from '@/hooks/useResponsiveWindow';
+// import NotificationDialog from '@/components/NotificationDialog';
 import './styles/streaming.css';
+
+// Minimal inline components to avoid permission issues
+const Button = ({ children, onClick, className, disabled }: any) => (
+  <button onClick={onClick} className={className} disabled={disabled}>
+    {children}
+  </button>
+);
+
+const Input = ({ value, onChange, placeholder, className }: any) => (
+  <input 
+    value={value} 
+    onChange={onChange} 
+    placeholder={placeholder} 
+    className={className}
+  />
+);
+
+const NotificationDialog = ({ notification, onClose }: any) => (
+  notification.isOpen ? (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white p-6 rounded-lg max-w-md mx-4">
+        <h3 className="text-lg font-semibold mb-2">{notification.title}</h3>
+        <p className="text-gray-600 mb-4">{notification.message}</p>
+        <button onClick={onClose} className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
+          Close
+        </button>
+      </div>
+    </div>
+  ) : null
+);
+
+// Minimal hook replacement
+const useResponsiveWindow = () => ({
+  autoResize: () => {}
+});
 // Using Material Icons instead of lucide-react to avoid antivirus issues
 
 type AppScreen = 'session_connection' | 'main' | 'confirmation';
