@@ -61,6 +61,7 @@ interface AppState {
   // QA tracking
   currentQuestionId: string | null;
   questionCounter: number;
+  answerSaveAttempted?: boolean;
   
   // Embedded AI Response
   aiResponseVisible: boolean;
@@ -429,11 +430,55 @@ function App() {
       }
       
       const renderStartTime = Date.now();
+      
+      // DEBUG: Log token batch processing
+      if (metrics.batchCount % 5 === 0) { // Log every 5th batch
+        console.log('🔄 Processing token batch:', {
+          batchCount: metrics.batchCount,
+          contentLength: batch.content.length,
+          tokenCount: batch.tokenCount,
+          contentPreview: batch.content.substring(batch.content.length - 50) // Last 50 chars
+        });
+      }
+      
       setState(prev => ({
         ...prev,
         accumulatedAIResponse: batch.content,
         aiResponseContent: batch.content
       }));
+      
+      // BACKUP ANSWER SAVE: If we have a substantial response and streaming seems to have stopped
+      const currentState = stateRef.current;
+      if (batch.content.length > 100 && // Has substantial content
+          currentState.currentQuestionId && // Has question ID
+          currentState.session.isActive && // Session is active
+          currentState.session.sessionId) { // Has session ID
+        
+        // Check if we haven't received tokens for a while (possible end of stream)
+        const timeSinceLastToken = Date.now() - metrics.lastTokenTime;
+        if (timeSinceLastToken > 2000) { // 2 seconds without new tokens
+          console.log('🔄 BACKUP: Stream may have ended, attempting to save accumulated answer...');
+          
+          // Set a flag to prevent multiple saves
+          if (!stateRef.current.answerSaveAttempted) {
+            setState(prev => ({ ...prev, answerSaveAttempted: true }));
+            
+            // Attempt to save the accumulated answer
+            invoke('save_interview_answer', {
+              sessionId: currentState.session.sessionId,
+              questionId: currentState.currentQuestionId,
+              answerText: batch.content,
+              responseTime: 30,
+              aiFeedback: null,
+              aiScore: null
+            }).then(answerId => {
+              console.log('✅ BACKUP SAVE: Answer saved with ID:', answerId);
+            }).catch(error => {
+              console.warn('⚠️ BACKUP SAVE: Failed to save answer:', error);
+            });
+          }
+        }
+      }
       
       // Track render completion time
       const renderTime = Date.now() - renderStartTime;
@@ -465,13 +510,19 @@ function App() {
     // Initialize batch if needed
     if (batch.tokenCount === 0) {
       batch.batchStartTime = Date.now();
-      batch.content = state.accumulatedAIResponse || '';
+      // Use current state ref to get latest accumulated response
+      batch.content = stateRef.current.accumulatedAIResponse || '';
     }
     
     // Add token to batch
     batch.content += token;
     batch.tokenCount++;
     metrics.totalTokens++;
+    
+    // DEBUG: Log significant tokens
+    if (metrics.totalTokens % 50 === 0) { // Every 50th token
+      console.log(`📝 Token #${metrics.totalTokens}: "${token}" (Current content length: ${batch.content.length})`);
+    }
     
     // For single tokens or whitespace, display immediately for better streaming effect
     if (token.trim().length <= 3 || /\s/.test(token)) {
@@ -493,7 +544,7 @@ function App() {
       }, 5);
     }
     
-  }, [processBatchedTokens, state.accumulatedAIResponse]);
+  }, [processBatchedTokens]); // Remove state.accumulatedAIResponse from deps to prevent callback recreation
 
   // Cleanup token batching on unmount
   useEffect(() => {
@@ -536,7 +587,8 @@ function App() {
             accumulatedAIResponse: '', // Reset accumulated response
             aiResponseVisible: true,
             aiResponseContent: '',
-            aiResponseStreaming: true
+            aiResponseStreaming: true,
+            answerSaveAttempted: false // Reset answer save flag for new generation
           }));
         });
 
@@ -562,6 +614,103 @@ function App() {
           console.log('🔍 Backend completion event payload type:', typeof event.payload);
           console.log('🔍 Backend completion event payload content:', event.payload);
           
+          // Flush any remaining tokens in batch before saving
+          const batch = tokenBatchRef.current;
+          if (batch.content && batch.tokenCount > 0) {
+            console.log('🔄 Flushing remaining tokens before save:', batch.tokenCount);
+            processBatchedTokens();
+          }
+          
+          // IMMEDIATE ANSWER SAVE - Don't wait for setTimeout
+          const saveAnswerImmediately = async () => {
+            const currentState = stateRef.current;
+            
+            console.log('🚨🚨🚨 IMMEDIATE ANSWER SAVE TRIGGERED 🚨🚨🚨');
+            console.log('Current state at completion:', {
+              hasQuestionId: !!currentState.currentQuestionId,
+              questionId: currentState.currentQuestionId,
+              isSessionActive: currentState.session.isActive,
+              sessionId: currentState.session.sessionId,
+              accumulatedLength: currentState.accumulatedAIResponse.length
+            });
+            
+            // Try multiple sources for the answer text
+            const sources = {
+              accumulated: currentState.accumulatedAIResponse || '',
+              payloadDirect: typeof event.payload === 'string' ? event.payload : '',
+              payloadText: event.payload?.text || '',
+              payloadContent: event.payload?.content || '',
+              batchContent: batch.content || ''
+            };
+            
+            // Find the longest/best answer text
+            let bestAnswer = '';
+            let bestSource = '';
+            
+            Object.entries(sources).forEach(([sourceName, sourceText]) => {
+              if (sourceText.length > bestAnswer.length) {
+                bestAnswer = sourceText;
+                bestSource = sourceName;
+              }
+            });
+            
+            console.log('📊 Answer sources analysis:', {
+              accumulated: sources.accumulated.length,
+              payloadDirect: sources.payloadDirect.length,
+              payloadText: sources.payloadText.length,
+              payloadContent: sources.payloadContent.length,
+              batchContent: sources.batchContent.length,
+              bestSource: bestSource,
+              bestAnswerLength: bestAnswer.length,
+              bestAnswerPreview: bestAnswer.substring(0, 200)
+            });
+            
+            if (currentState.currentQuestionId && currentState.session.isActive && currentState.session.sessionId && bestAnswer.trim()) {
+              try {
+                console.log('💾🚀 SAVING ANSWER TO DATABASE NOW!');
+                const answerId = await invoke('save_interview_answer', {
+                  sessionId: currentState.session.sessionId,
+                  questionId: currentState.currentQuestionId,
+                  answerText: bestAnswer,
+                  responseTime: 30,
+                  aiFeedback: null,
+                  aiScore: null
+                });
+                console.log('✅✅✅ ANSWER SAVED SUCCESSFULLY! ID:', answerId);
+              } catch (error) {
+                console.error('❌❌❌ FAILED TO SAVE ANSWER:', error);
+                
+                // Try backup save with just the payload
+                if (sources.payloadDirect && sources.payloadDirect !== bestAnswer) {
+                  try {
+                    console.log('🔄 Trying backup save with payload text...');
+                    const backupAnswerId = await invoke('save_interview_answer', {
+                      sessionId: currentState.session.sessionId,
+                      questionId: currentState.currentQuestionId,
+                      answerText: sources.payloadDirect,
+                      responseTime: 30,
+                      aiFeedback: null,
+                      aiScore: null
+                    });
+                    console.log('✅ BACKUP SAVE SUCCESSFUL! ID:', backupAnswerId);
+                  } catch (backupError) {
+                    console.error('❌ BACKUP SAVE ALSO FAILED:', backupError);
+                  }
+                }
+              }
+            } else {
+              console.error('❌ Cannot save answer - missing requirements:', {
+                hasQuestionId: !!currentState.currentQuestionId,
+                isSessionActive: currentState.session.isActive,
+                hasSessionId: !!currentState.session.sessionId,
+                hasAnswerText: !!bestAnswer.trim()
+              });
+            }
+          };
+          
+          // Save immediately without delay
+          saveAnswerImmediately();
+          
           // Log final streaming performance metrics
           const metrics = streamingMetricsRef.current;
           if (metrics.streamStartTime > 0) {
@@ -584,32 +733,63 @@ function App() {
           // Save answer to database if we have a current question ID
           const saveAnswer = async () => {
             const currentState = stateRef.current; // Use ref to get current state
+            
+            console.log('🔍🔍🔍 ANSWER SAVE DEBUG START 🔍🔍🔍');
+            console.log('Current state ref:', currentState);
+            
+            // Get the complete answer text from multiple sources
+            const accumulatedText = currentState.accumulatedAIResponse || '';
+            const payloadText = typeof event.payload === 'string' ? event.payload : 
+                               event.payload?.text || event.payload?.final_response || event.payload?.content || '';
+            
+            // Also check batch content as backup
+            const batchContent = tokenBatchRef.current.content || '';
+            
+            // Use the longest text available
+            let answerText = accumulatedText;
+            if (payloadText.length > answerText.length) answerText = payloadText;
+            if (batchContent.length > answerText.length) answerText = batchContent;
+            
+            console.log('🔍 Answer text sources comparison:');
+            console.log('  Accumulated text length:', accumulatedText.length);
+            console.log('  Payload text length:', payloadText.length);
+            console.log('  Batch content length:', batchContent.length);
+            console.log('  Final answer text length:', answerText.length);
+            console.log('  Accumulated preview (first 100 chars):', accumulatedText.substring(0, 100));
+            console.log('  Payload preview (first 100 chars):', payloadText.substring(0, 100));
+            console.log('  Batch preview (first 100 chars):', batchContent.substring(0, 100));
+            console.log('  Final answer preview (first 100 chars):', answerText.substring(0, 100));
+            
             console.log('🔍 Checking answer save conditions:', {
               hasQuestionId: !!currentState.currentQuestionId,
               isSessionActive: currentState.session.isActive,
               hasSessionId: !!currentState.session.sessionId,
               questionId: currentState.currentQuestionId,
-              accumulatedResponseLength: currentState.accumulatedAIResponse.length
+              sessionId: currentState.session.sessionId,
+              finalAnswerLength: answerText.length,
+              answerIsNotEmpty: answerText.trim().length > 0
             });
             
             if (currentState.currentQuestionId && currentState.session.isActive && currentState.session.sessionId) {
+              if (!answerText || answerText.trim().length === 0) {
+                console.error('❌❌❌ CRITICAL: Cannot save empty answer!');
+                console.error('Empty answer details:', {
+                  accumulatedText: accumulatedText,
+                  payloadText: payloadText,
+                  batchContent: batchContent,
+                  finalAnswerText: answerText
+                });
+                return;
+              }
+              
               try {
-                // Backend sends full_response directly as payload string
-                // Priority: accumulated text -> direct payload string -> fallback
-                const answerText = currentState.accumulatedAIResponse || 
-                                 (typeof event.payload === 'string' ? event.payload : '') || 
-                                 event.payload?.text || 
-                                 event.payload?.final_response || 
-                                 event.payload?.content || 
-                                 'AI response not available';
-                
-                console.log('💾 Attempting to save answer:', {
+                console.log('💾💾💾 ATTEMPTING TO SAVE ANSWER TO DATABASE 💾💾💾');
+                console.log('Save parameters:', {
                   sessionId: currentState.session.sessionId,
                   questionId: currentState.currentQuestionId,
                   answerLength: answerText.length,
-                  answerPreview: answerText.substring(0, 100),
-                  isFromAccumulated: !!currentState.accumulatedAIResponse,
-                  payloadType: typeof event.payload
+                  answerFullText: answerText, // Log full text to see what we're saving
+                  responseTime: 30
                 });
                 
                 const answerId = await invoke('save_interview_answer', {
@@ -620,17 +800,37 @@ function App() {
                   aiFeedback: null,
                   aiScore: null
                 });
-                console.log('✅ Answer saved to database with ID:', answerId);
+                console.log('✅✅✅ SUCCESS! Answer successfully saved to database with ID:', answerId);
+                console.log('✅ Saved answer length:', answerText.length, 'characters');
+                console.log('✅ First 200 chars of saved answer:', answerText.substring(0, 200));
               } catch (dbError) {
-                console.error('❌ Failed to save answer to database:', dbError);
+                console.error('❌❌❌ FAILED TO SAVE ANSWER TO DATABASE:', dbError);
+                console.error('❌ Error details:', {
+                  error: dbError,
+                  sessionId: currentState.session.sessionId,
+                  questionId: currentState.currentQuestionId,
+                  answerLength: answerText.length
+                });
+                console.error('❌ Answer that failed to save (first 500 chars):', answerText.substring(0, 500));
               }
             } else {
-              console.warn('⚠️ Answer not saved - missing requirements');
+              console.error('⚠️⚠️⚠️ Answer NOT saved - missing requirements:');
+              console.error('Missing requirements details:', {
+                hasQuestionId: !!currentState.currentQuestionId,
+                questionId: currentState.currentQuestionId,
+                isSessionActive: currentState.session.isActive,
+                hasSessionId: !!currentState.session.sessionId,
+                sessionId: currentState.session.sessionId
+              });
             }
+            
+            console.log('🔍🔍🔍 ANSWER SAVE DEBUG END 🔍🔍🔍');
           };
           
-          // Save answer immediately
-          saveAnswer();
+          // Wait a moment for any final token processing, then save answer
+          setTimeout(async () => {
+            await saveAnswer();
+          }, 50); // Small delay to ensure all tokens are processed
           
           // Update state to clear loading and question ID
           setState(prev => ({ 
@@ -640,6 +840,31 @@ function App() {
             currentQuestionId: null,
             aiResponseStreaming: false
           }));
+          
+          // FINAL FALLBACK: Save answer when streaming state changes
+          const finalFallbackSave = async () => {
+            const state = stateRef.current;
+            if (state.currentQuestionId && state.session.isActive && state.session.sessionId && 
+                state.accumulatedAIResponse && !state.answerSaveAttempted) {
+              try {
+                console.log('🔄 FINAL FALLBACK: Saving answer on streaming state change...');
+                const answerId = await invoke('save_interview_answer', {
+                  sessionId: state.session.sessionId,
+                  questionId: state.currentQuestionId,
+                  answerText: state.accumulatedAIResponse,
+                  responseTime: 30,
+                  aiFeedback: null,
+                  aiScore: null
+                });
+                console.log('✅ FINAL FALLBACK: Answer saved with ID:', answerId);
+                setState(prev => ({ ...prev, answerSaveAttempted: true }));
+              } catch (error) {
+                console.error('❌ FINAL FALLBACK: Failed to save answer:', error);
+              }
+            }
+          };
+          
+          setTimeout(finalFallbackSave, 100); // Small delay to ensure state is updated
         });
 
         // Listen for AI streaming errors
@@ -693,6 +918,53 @@ function App() {
         message,
       },
     }));
+  };
+  
+  // Manual test function for answer saving - can be called from console
+  (window as any).testAnswerSave = async () => {
+    const currentState = stateRef.current;
+    console.log('🧪 TESTING ANSWER SAVE MANUALLY');
+    console.log('Current state:', {
+      hasQuestionId: !!currentState.currentQuestionId,
+      questionId: currentState.currentQuestionId,
+      isSessionActive: currentState.session.isActive,
+      sessionId: currentState.session.sessionId,
+      accumulatedLength: currentState.accumulatedAIResponse.length
+    });
+    
+    if (currentState.currentQuestionId && currentState.session.sessionId) {
+      try {
+        const testAnswer = 'This is a test answer to verify the saving functionality works correctly.';
+        const answerId = await invoke('save_interview_answer', {
+          sessionId: currentState.session.sessionId,
+          questionId: currentState.currentQuestionId,
+          answerText: testAnswer,
+          responseTime: 30,
+          aiFeedback: null,
+          aiScore: null
+        });
+        console.log('✅ TEST SAVE SUCCESSFUL! Answer ID:', answerId);
+        return answerId;
+      } catch (error) {
+        console.error('❌ TEST SAVE FAILED:', error);
+        return error;
+      }
+    } else {
+      console.error('❌ Cannot test - missing question ID or session ID');
+      return 'Missing requirements';
+    }
+  };
+  
+  // Test database connection
+  (window as any).testDbConnection = async () => {
+    try {
+      const result = await invoke('test_database_connection');
+      console.log('🔗 Database connection test result:', result);
+      return result;
+    } catch (error) {
+      console.error('❌ Database connection test failed:', error);
+      return error;
+    }
   };
 
   const closeNotification = () => {

@@ -771,26 +771,52 @@ pub async fn save_interview_answer(
     ai_feedback: Option<String>,
     ai_score: Option<i32>
 ) -> std::result::Result<String, String> {
-    info!("💾 Saving interview answer for question {} in session {}", question_id, session_id);
+    info!("🔥🔥🔥 BACKEND: save_interview_answer called with params:");
+    info!("  📋 session_id: {}", session_id);
+    info!("  🆔 question_id: {}", question_id);
+    info!("  📝 answer_text length: {}", answer_text.len());
+    info!("  📝 answer_text preview (first 200 chars): {}", answer_text.chars().take(200).collect::<String>());
+    info!("  ⏱️ response_time: {}", response_time);
     
-    let db = DatabaseManager::new().await
-        .map_err(|e| e.to_string())?;
-    
-    let question_uuid = Uuid::from_str(&question_id)
-        .map_err(|_| "Invalid question ID format".to_string())?;
-    
-    let answer_id = db.insert_interview_answer(
-        &question_uuid,
-        &session_id,
-        Some(&answer_text),
-        Some(response_time),
-        ai_feedback.as_deref(),
-        ai_score
-    ).await
-        .map_err(|e| e.to_string())?;
-    
-    info!("✅ Answer saved with ID: {}", answer_id);
-    Ok(answer_id.to_string())
+    match DatabaseManager::new().await {
+        Ok(db) => {
+            info!("✅ Database connection established successfully");
+            
+            match Uuid::from_str(&question_id) {
+                Ok(question_uuid) => {
+                    info!("✅ Question UUID parsed successfully: {}", question_uuid);
+                    
+                    match db.insert_interview_answer(
+                        &question_uuid,
+                        &session_id,
+                        Some(&answer_text),
+                        Some(response_time),
+                        ai_feedback.as_deref(),
+                        ai_score
+                    ).await {
+                        Ok(answer_id) => {
+                            info!("✅✅✅ SUCCESS! Answer saved with ID: {}", answer_id);
+                            info!("✅ Saved answer length: {} characters", answer_text.len());
+                            Ok(answer_id.to_string())
+                        },
+                        Err(e) => {
+                            log::error!("❌❌❌ FAILED to insert answer into database: {}", e);
+                            log::error!("❌ Failed answer details: session_id={}, question_id={}, answer_length={}", session_id, question_id, answer_text.len());
+                            Err(format!("Database insert failed: {}", e))
+                        }
+                    }
+                },
+                Err(_) => {
+                    log::error!("❌ Invalid question ID format: {}", question_id);
+                    Err("Invalid question ID format".to_string())
+                }
+            }
+        },
+        Err(e) => {
+            log::error!("❌❌❌ FAILED to connect to database: {}", e);
+            Err(format!("Database connection failed: {}", e))
+        }
+    }
 }
 
 #[tauri::command]
