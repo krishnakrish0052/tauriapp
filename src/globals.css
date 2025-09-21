@@ -1,0 +1,632 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Disable right-click context menu globally */
+* {
+  -webkit-touch-callout: none; /* iOS Safari */
+  -webkit-user-select: none;   /* Safari */
+  -khtml-user-select: none;    /* Konqueror HTML */
+  -moz-user-select: none;      /* Firefox */
+  -ms-user-select: none;       /* Internet Explorer/Edge */
+  user-select: none;           /* Non-prefixed version, currently supported by Chrome and Opera */
+  -webkit-context-menu: none;  /* Disable context menu on WebKit */
+}
+
+/* Allow text selection for input fields and text areas */
+input, textarea, [contenteditable="true"] {
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+}
+
+/* Disable context menu for the entire document */
+html, body {
+  -webkit-context-menu: none;
+  -webkit-touch-callout: none;
+}
+
+@layer base {
+  :root {
+    /* MockMate Design System Variables */
+    --primary-bg: #000000;
+    --secondary-bg: rgba(0, 0, 0, 0.7);
+    --panel-bg: rgba(0, 0, 0, 0.7);
+    --accent: #00d4ff;
+    --accent-secondary: #ff6b35;
+    --success: #00c896;
+    --danger: #ff4757;
+    --warning: #ffa502;
+    --text-primary: #ffffff;
+    --text-secondary: #ffffff;
+    --text-muted: rgba(255, 255, 255, 0.7);
+    --border: rgba(255, 255, 255, 0.15);
+    --border-active: rgba(0, 212, 255, 0.4);
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
+    --gradient-primary: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(255, 107, 53, 0.05));
+    --gradient-panel: linear-gradient(145deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+
+    /* shadcn/ui variables mapped to MockMate colors */
+    --background: 0 0% 0%;
+    --foreground: 0 0% 100%;
+    --card: 0 0% 0%;
+    --card-foreground: 0 0% 100%;
+    --popover: 0 0% 7%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 195 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 7%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 0 0% 7%;
+    --muted-foreground: 0 0% 70%;
+    --accent: 195 100% 50%;
+    --accent-foreground: 0 0% 0%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 15%;
+    --input: 0 0% 15%;
+    --ring: 195 100% 50%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+  
+  body {
+    @apply bg-transparent text-foreground;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', 'SF Pro Display', system-ui, sans-serif;
+    margin: 0;
+    padding: 0;
+    line-height: 1.6;
+    font-size: 14px;
+    overflow: hidden;
+    /* FIXED: Match content size exactly */
+    height: fit-content;
+    min-height: 0;
+    box-sizing: border-box;
+  }
+  
+  /* Force root elements to exact sizing */
+  html {
+    margin: 0;
+    padding: 0;
+    height: fit-content;
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+  
+  /* Ensure no extra space in main container */
+  #root {
+    height: fit-content;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+}
+
+@layer utilities {
+  /* Hide scrollbars */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  
+  /* Custom thin scrollbar for model dropdown */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #4a5568 transparent;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: rgba(74, 85, 104, 0.5);
+    border-radius: 3px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(74, 85, 104, 0.8);
+  }
+}
+
+@layer components {
+  /* MockMate specific component styles */
+  .mockmate-window {
+    @apply w-full h-full flex flex-col relative;
+    background: rgba(0, 0, 0, 0.90); /* Increased opacity by 30% (0.60 + 0.30) */
+    border-radius: 16px;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .mockmate-window::before {
+    content: '';
+    @apply absolute inset-0 pointer-events-none;
+    background: var(--gradient-primary);
+    opacity: 0.3;
+    border-radius: inherit;
+  }
+
+  .mockmate-header {
+    @apply flex justify-between items-center relative z-[2000] gap-3 flex-shrink-0;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--gradient-panel);
+  }
+
+  .mockmate-brand {
+    @apply flex items-center gap-3;
+  }
+
+  .mockmate-logo {
+    @apply w-8 h-8 rounded-lg flex items-center justify-center text-lg text-white;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .mockmate-title {
+    @apply text-lg font-semibold m-0 tracking-tight;
+    background: linear-gradient(135deg, #000000, #333333);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .mockmate-status-pill {
+    @apply px-3 py-1.5 rounded-full text-xs font-medium border ml-4 animate-pulse;
+    background: rgba(0, 200, 150, 0.15);
+    color: var(--success);
+    border-color: rgba(0, 200, 150, 0.2);
+  }
+
+  .mockmate-controls {
+    @apply flex items-center gap-4 text-xs flex-wrap;
+  }
+
+  .mockmate-control-item {
+    @apply flex items-center gap-2 text-secondary transition-colors duration-200 hover:text-primary;
+  }
+
+  .mockmate-control-icon {
+    @apply flex items-center justify-center text-mockmate-accent;
+  }
+
+  .mockmate-utility-btn {
+    @apply w-7 h-7 flex items-center justify-center rounded-md cursor-pointer transition-all duration-200 text-sm;
+    background: rgba(0, 0, 0, 0.8);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+  }
+
+  .mockmate-utility-btn:hover {
+    @apply -translate-y-0.5;
+    background: rgba(0, 0, 0, 0.9);
+    color: var(--text-primary);
+  }
+
+  .mockmate-utility-btn.danger:hover {
+    background: rgba(255, 71, 87, 0.2);
+    color: var(--danger);
+    border-color: var(--danger);
+  }
+
+  .mockmate-utility-btn.active {
+    background: rgba(0, 212, 255, 0.2);
+    color: var(--accent);
+    box-shadow: 0 0 8px rgba(0, 212, 255, 0.3);
+  }
+
+  .mockmate-transcription-container {
+    @apply flex items-stretch relative z-[1] flex-[0.7];
+    border-bottom: 1px solid var(--border);
+    background: rgba(0, 0, 0, 1.0); /* Increased opacity by 30% (0.7 + 0.3) */
+  }
+
+  .mockmate-transcription-area {
+    @apply p-3 text-xl leading-relaxed min-h-7 flex-1 overflow-x-auto overflow-y-hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .mockmate-transcription-area::-webkit-scrollbar {
+    display: none;
+  }
+
+  .mockmate-transcription-text {
+    @apply transition-all duration-200 whitespace-nowrap inline-block align-middle animate-fadeIn;
+    color: var(--text-secondary);
+    font-style: italic;
+    opacity: 0.8;
+  }
+
+  .mockmate-transcription-text.active {
+    color: var(--text-primary);
+    opacity: 1;
+    font-style: normal;
+  }
+
+  .mockmate-transcription-text.listening {
+    color: var(--accent);
+  }
+
+  .mockmate-transcription-text.interim {
+    color: var(--text-muted);
+    font-style: italic;
+    border-left: 3px solid var(--accent);
+    padding-left: 16px;
+    opacity: 0.8;
+  }
+
+  .mockmate-input-section {
+    @apply flex items-center p-3 gap-2 relative z-[1] flex-shrink-0;
+    background: rgba(0, 0, 0, 1.0); /* Increased opacity by 30% (0.7 + 0.3) */
+    border-radius: 0 0 16px 16px;
+  }
+
+  .mockmate-action-btn {
+    @apply px-3.5 py-2 rounded-xl border font-medium text-xs whitespace-nowrap flex items-center gap-1.5 cursor-pointer transition-all duration-200;
+    background: rgba(0, 0, 0, 0.8);
+    border-color: var(--border);
+    color: var(--text-primary);
+  }
+
+  .mockmate-action-btn:hover {
+    @apply -translate-y-0.5;
+    background: rgba(0, 0, 0, 0.9);
+    border-color: var(--border-active);
+  }
+
+  .mockmate-action-btn.primary {
+    background: linear-gradient(135deg, var(--accent), rgba(0, 212, 255, 0.8));
+    border-color: transparent;
+    color: white;
+  }
+
+  .mockmate-action-btn.primary:hover {
+    background: linear-gradient(135deg, rgba(0, 212, 255, 0.9), var(--accent));
+    box-shadow: 0 4px 16px rgba(0, 212, 255, 0.3);
+  }
+
+  .mockmate-text-input {
+    @apply w-full h-10 rounded-xl px-4 text-sm transition-all duration-200;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+  }
+
+  .mockmate-text-input:focus {
+    @apply outline-none;
+    background: rgba(255, 255, 255, 0.08);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.15);
+  }
+
+  .mockmate-text-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .mockmate-send-btn {
+    @apply w-10 h-10 rounded-xl flex items-center justify-center border-none cursor-pointer font-semibold transition-all duration-200;
+    background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+    color: white;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .mockmate-send-btn:hover {
+    @apply scale-105;
+    box-shadow: 0 4px 20px rgba(0, 212, 255, 0.4);
+  }
+
+  /* Session Management Styles */
+  .mockmate-session-timer {
+    @apply hidden items-center gap-2 px-3 py-1.5 rounded-lg font-bold text-sm tracking-wide animate-timerPulse;
+    background: rgba(255, 71, 87, 0.15);
+    border: 1px solid rgba(255, 71, 87, 0.3);
+    color: var(--danger);
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+    letter-spacing: 0.5px;
+  }
+
+  .mockmate-session-timer.active {
+    @apply flex;
+  }
+
+  .mockmate-session-timer .timer-icon {
+    @apply text-base animate-blink;
+  }
+
+  .mockmate-session-info {
+    @apply hidden items-center gap-1.5 px-2 py-1 rounded text-xs;
+    background: rgba(0, 212, 255, 0.1);
+    border: 1px solid rgba(0, 212, 255, 0.3);
+    color: var(--accent);
+  }
+
+  .mockmate-session-info.active {
+    @apply flex;
+  }
+
+  .mockmate-session-status {
+    @apply w-1.5 h-1.5 rounded-full animate-pulse;
+    background: var(--success);
+  }
+
+  .mockmate-session-credits {
+    @apply px-1.5 py-0.5 rounded font-medium;
+    background: rgba(255, 107, 53, 0.1);
+    color: var(--accent-secondary);
+  }
+
+  .mockmate-recording-indicator {
+    @apply w-2 h-2 rounded-full animate-blink;
+    background: var(--danger);
+    box-shadow: 0 0 8px var(--danger);
+  }
+
+  /* Session Connection Styles */
+  .session-connection-container {
+    @apply w-full h-full flex items-center justify-center relative;
+  }
+  
+  .session-connection-container::before {
+    content: '';
+    @apply absolute inset-0 pointer-events-none;
+    background: var(--gradient-primary);
+    opacity: 0.3;
+    border-radius: inherit;
+  }
+  
+  .session-connection-panel {
+    @apply w-full h-full flex flex-col relative p-5 box-border justify-center items-stretch gap-4;
+    background: rgba(0, 0, 0, 0.90); /* Increased opacity by 30% (0.60 + 0.30) */
+    border-radius: 16px;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  
+  .session-connection-header {
+    @apply flex flex-row items-center justify-between gap-3 relative mb-2;
+  }
+  
+  .session-header-content {
+    @apply flex flex-row items-center justify-start gap-4 flex-1;
+  }
+  
+  .session-brand {
+    @apply flex items-center gap-3;
+  }
+  
+  .session-close-btn {
+    @apply w-9 h-9 flex items-center justify-center rounded-lg cursor-pointer;
+    background: rgba(255, 71, 87, 0.1);
+    border: 1px solid rgba(255, 71, 87, 0.3);
+    color: var(--danger);
+  }
+  
+  .info-input {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 13px;
+    padding: 6px 10px;
+    transition: all 0.2s ease;
+  }
+  
+  .info-input::placeholder {
+    color: var(--text-muted);
+  }
+  
+  .info-input:focus {
+    @apply outline-none;
+    background: rgba(255, 255, 255, 0.1);
+    border-color: var(--border-active);
+  }
+
+  /* Custom Select Styles */
+  .custom-select-wrapper {
+    @apply relative z-[3000];
+  }
+  
+  .custom-select {
+    @apply flex items-center gap-2 cursor-pointer transition-all duration-200;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 13px;
+    padding: 6px 10px;
+  }
+  
+  .custom-select:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: var(--border-active);
+  }
+  
+  .custom-select .model-icon {
+    @apply w-4 h-4;
+  }
+  
+  .custom-select .arrow {
+    @apply ml-auto text-lg transition-transform duration-200;
+  }
+  
+  .custom-select.open .arrow {
+    @apply rotate-180;
+  }
+
+  .clear-button-area {
+    @apply p-2 flex items-center justify-center flex-shrink-0;
+  }
+  
+  .clear-transcription-btn {
+    background: rgba(255, 255, 255, 0.1);
+    transition: background-color 0.2s ease;
+  }
+
+  /* Responsive Design */
+  
+  /* Height-based responsive classes */
+  .responsive-window-sm {
+    @apply max-w-[95vw] min-h-[220px];
+  }
+  
+  .responsive-window-md {
+    @apply max-w-[900px] min-h-[250px];
+  }
+  
+  .responsive-window-lg {
+    @apply w-[1100px] min-h-[280px];
+  }
+  
+  .responsive-session-sm {
+    @apply min-h-[280px];
+  }
+  
+  .responsive-session-md {
+    @apply min-h-[320px];
+  }
+  
+  .responsive-session-lg {
+    @apply min-h-[360px];
+  }
+  
+  .responsive-main-sm {
+    @apply min-h-[500px] max-h-[600px];
+  }
+  
+  .responsive-main-md {
+    @apply min-h-[600px] max-h-[700px];
+  }
+  
+  .responsive-main-lg {
+    @apply min-h-[700px] max-h-[800px];
+  }
+  
+  /* Dynamic height transitions */
+  .height-transition {
+    transition: min-height 0.3s ease-in-out, max-height 0.3s ease-in-out, height 0.3s ease-in-out;
+  }
+  
+  /* Content expansion states */
+  .content-collapsed {
+    @apply max-h-[200px] overflow-hidden;
+  }
+  
+  .content-expanded {
+    @apply max-h-[400px] overflow-y-auto;
+  }
+  
+  /* Responsive button sizes */
+  .btn-responsive-sm {
+    @apply px-3 py-1.5 text-xs;
+  }
+  
+  .btn-responsive-md {
+    @apply px-4 py-2 text-sm;
+  }
+  
+  .btn-responsive-lg {
+    @apply px-6 py-3 text-base;
+  }
+  
+  /* Screen size specific styles */
+  @screen sm {
+    .mockmate-header {
+      @apply px-3 py-2;
+    }
+    
+    .mockmate-input-section {
+      @apply px-3 py-2 gap-2;
+    }
+    
+    .mockmate-transcription-area {
+      @apply p-3 text-base;
+    }
+    
+    .session-connection-panel {
+      @apply p-4;
+    }
+  }
+
+  @screen md {
+    .mockmate-header {
+      @apply px-6 py-3;
+    }
+    
+    .mockmate-input-section {
+      @apply px-6 py-3 gap-3;
+    }
+    
+    .mockmate-transcription-area {
+      @apply p-4 text-lg;
+    }
+    
+    .session-connection-panel {
+      @apply p-5;
+    }
+  }
+  
+  @screen lg {
+    .mockmate-header {
+      @apply px-8 py-4;
+    }
+    
+    .mockmate-input-section {
+      @apply px-8 py-4 gap-4;
+    }
+    
+    .mockmate-transcription-area {
+      @apply p-5 text-xl;
+    }
+    
+    .session-connection-panel {
+      @apply p-6;
+    }
+  }
+}
+
+/* Material Icons Font */
+@font-face {
+  font-family: 'Material Icons';
+  font-style: normal;
+  font-weight: 400;
+  src: url('https://fonts.gstatic.com/s/materialicons/v140/flUhRq6tzZclQEJ-Vdg-IuiaDsNc.woff2') format('woff2');
+}
+
+.material-icons {
+  font-family: 'Material Icons';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 20px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'liga';
+}

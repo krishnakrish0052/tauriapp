@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/mockmate-logo.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MockMate - AI Response</title>
+  
+  <!-- Material Icons for compatibility -->
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  
+  <style>
+    /* Base styles */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: rgba(0, 0, 0, 0.6); /* Increased opacity by 30% (0.3 + 0.3) */
+      backdrop-filter: blur(10px);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+      color: white;
+      font-size: 16px;
+    }
+
+    body {
+      /* Add rounded borders with 5px gap from main window */
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      margin: 0;
+      padding: 0;
+      position: relative;
+      overflow: hidden; /* Ensure rounded corners are clean */
+    }
+
+    /* Container */
+    .ai-response-container {
+      width: 100%;
+      height: 100%;
+      max-height: 600px; /* Maximum height of 600px */
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border-radius: 12px; /* Match body border-radius */
+    }
+
+    /* Header */
+    .ai-response-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 10px; /* Reduced padding */
+      background: rgba(0, 0, 0, 0.2); /* More transparent header */
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      flex-shrink: 0;
+      border-radius: 12px 12px 0 0; /* Rounded top corners only */
+    }
+
+    /* Header controls */
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .control-button {
+      width: 20px;
+      height: 20px;
+      border: none;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.1);
+      color: white;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+      font-size: 14px;
+    }
+
+    .control-button:hover {
+      background: rgba(255, 255, 255, 0.2);
+      transform: scale(1.1);
+    }
+
+    .minimize-button {
+      background: rgba(255, 193, 7, 0.2);
+    }
+
+    .minimize-button:hover {
+      background: rgba(255, 193, 7, 0.4);
+    }
+
+    .header-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .header-icon {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .header-icon .material-icons {
+      font-size: 10px;
+      color: white;
+    }
+
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10px;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #10b981;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* Content */
+    .ai-response-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px; /* Reduced padding */
+    }
+
+    .response-text {
+      line-height: 1.7;
+      font-size: 16px; /* Increased from 14px */
+      white-space: normal; /* Allow proper HTML rendering */
+      word-wrap: break-word;
+      color: #f1f5f9; /* Brighter white */
+    }
+
+    /* Loading state */
+    .loading {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #60a5fa;
+      font-size: 13px;
+    }
+
+    .loading-spinner {
+      width: 12px;
+      height: 12px;
+      border: 2px solid rgba(96, 165, 250, 0.3);
+      border-top: 2px solid #60a5fa;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    /* Error state */
+    .error {
+      color: #f87171;
+      background: rgba(248, 113, 113, 0.1);
+      border: 1px solid rgba(248, 113, 113, 0.3);
+      border-radius: 6px;
+      padding: 8px;
+      font-size: 12px;
+    }
+
+    /* Scrollbar styling */
+    .ai-response-content::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .ai-response-content::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 2px;
+    }
+
+    .ai-response-content::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.3);
+      border-radius: 2px;
+    }
+
+    .ai-response-content::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.5);
+    }
+
+    /* Enhanced Typography */
+    .response-text h1, .response-text h2, .response-text h3 {
+      margin: 20px 0 12px 0;
+      color: #60a5fa;
+      font-weight: 700;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    }
+
+    .response-text h1 {
+      font-size: 24px; /* Increased */
+      border-bottom: 2px solid rgba(96, 165, 250, 0.4);
+      padding-bottom: 8px;
+      color: #3b82f6;
+    }
+
+    .response-text h2 {
+      font-size: 20px; /* Increased */
+      color: #60a5fa;
+    }
+
+    .response-text h3 {
+      font-size: 18px; /* Increased */
+      color: #93c5fd;
+    }
+
+    .response-text p {
+      margin: 12px 0;
+      line-height: 1.7;
+      font-size: 16px; /* Increased */
+      color: #f1f5f9;
+    }
+
+    .response-text ul, .response-text ol {
+      margin: 12px 0 12px 24px;
+      padding-left: 20px;
+    }
+
+    .response-text li {
+      margin: 6px 0;
+      line-height: 1.6;
+      font-size: 15px; /* Increased */
+      color: #e2e8f0;
+    }
+
+    .response-text code {
+      background: rgba(16, 185, 129, 0.3); /* 30% transparency for inline code */
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', monospace;
+      font-size: 14px;
+      color: #10d9c4;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      font-weight: 500;
+      backdrop-filter: blur(2px);
+    }
+
+    .response-text pre {
+      background: rgba(15, 23, 42, 0.3); /* 30% transparency for code blocks */
+      padding: 16px;
+      border-radius: 10px;
+      overflow-x: auto;
+      margin: 16px 0;
+      border: 1px solid rgba(71, 85, 105, 0.3); /* More transparent border */
+      position: relative;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 2px 4px rgba(0, 0, 0, 0.2);
+      backdrop-filter: blur(5px);
+    }
+
+    .response-text pre code {
+      background: transparent;
+      border: none;
+      padding: 0;
+      color: #e2e8f0;
+      font-size: 14px; /* Consistent with inline code */
+      line-height: 1.6;
+    }
+
+    .response-text blockquote {
+      border-left: 4px solid #60a5fa;
+      margin: 16px 0;
+      padding: 12px 20px;
+      background: rgba(96, 165, 250, 0.12);
+      border-radius: 0 8px 8px 0;
+      font-style: italic;
+      color: #cbd5e1;
+    }
+
+    .response-text strong {
+      font-weight: 700;
+      color: #fbbf24;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    }
+
+    .response-text em {
+      color: #c084fc;
+      font-style: italic;
+    }
+
+    .response-text a {
+      color: #60a5fa;
+      text-decoration: underline;
+      text-decoration-color: rgba(96, 165, 250, 0.5);
+      transition: all 0.2s ease;
+    }
+
+    .response-text a:hover {
+      color: #93c5fd;
+      text-decoration-color: #93c5fd;
+      text-shadow: 0 0 4px rgba(147, 197, 253, 0.4);
+    }
+
+    .response-text hr {
+      border: none;
+      border-top: 2px solid rgba(255, 255, 255, 0.15);
+      margin: 24px 0;
+    }
+
+    .response-text table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 16px 0;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    .response-text th, .response-text td {
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      padding: 12px 16px;
+      text-align: left;
+      font-size: 15px;
+    }
+
+    .response-text th {
+      background: rgba(96, 165, 250, 0.25);
+      font-weight: 700;
+      color: #f1f5f9;
+    }
+
+    .response-text td {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    /* Syntax highlighting for common keywords */
+    .response-text .keyword {
+      color: #f472b6;
+      font-weight: 600;
+    }
+
+    .response-text .string {
+      color: #34d399;
+    }
+
+    .response-text .number {
+      color: #fbbf24;
+    }
+
+    .response-text .comment {
+      color: #94a3b8;
+      font-style: italic;
+    }
+
+    /* Streaming performance optimizations */
+    .response-text {
+      /* GPU acceleration for smooth text updates */
+      transform: translateZ(0);
+      backface-visibility: hidden;
+      
+      /* Optimized font rendering */
+      font-feature-settings: "kern" 1;
+      text-rendering: optimizeSpeed;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      
+      /* Layout containment for better performance */
+      contain: layout style paint;
+      
+      /* Prevent layout shifts during streaming */
+      min-height: 1.5em;
+    }
+
+    /* Active streaming state */
+    .response-text.streaming-active {
+      /* Enhanced GPU acceleration during streaming */
+      will-change: contents;
+      transform: translate3d(0, 0, 0);
+    }
+
+    /* Disable animations on reduced motion preference */
+    @media (prefers-reduced-motion: reduce) {
+      .response-text {
+        transform: none;
+        will-change: auto;
+      }
+    }
+
+    /* Performance optimizations for low-end devices */
+    @media (max-resolution: 96dpi) {
+      .response-text {
+        text-rendering: auto;
+        -webkit-font-smoothing: auto;
+        transform: none;
+        will-change: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="ai-response-container">
+    <div class="ai-response-header">
+      <div class="header-title">
+        <div class="header-icon">
+          <span class="material-icons">psychology</span>
+        </div>
+        <span>AI Response</span>
+      </div>
+      <div class="header-controls">
+        <div class="status-indicator">
+          <div class="status-dot"></div>
+          <span id="status-text">Ready</span>
+        </div>
+        <button class="control-button minimize-button" id="minimize-btn" title="Minimize Window">
+          <span class="material-icons" style="font-size: 12px;">minimize</span>
+        </button>
+      </div>
+    </div>
+    
+    <div class="ai-response-content" id="content">
+      <div class="loading">
+        <div class="loading-spinner"></div>
+        <span>Waiting for AI response...</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Markdown-like text processing function
+    function processMarkdown(text) {
+      // Simple markdown-to-HTML processing
+      let html = text
+        // Headers
+        .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+        .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+        .replace(/^# (.*$)/gm, '<h1>$1</h1>')
+        // Bold and italic
+        .replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.*?)\*/g, '<em>$1</em>')
+        // Code blocks
+        .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        // Line breaks and paragraphs
+        .replace(/\n\n/g, '</p><p>')
+        .replace(/\n/g, '<br>')
+        // Lists
+        .replace(/^- (.*$)/gm, '<li>$1</li>')
+        .replace(/^\* (.*$)/gm, '<li>$1</li>')
+        .replace(/^\d+\. (.*$)/gm, '<li>$1</li>')
+        // Blockquotes
+        .replace(/^> (.*$)/gm, '<blockquote>$1</blockquote>')
+        // Horizontal rules
+        .replace(/^---$/gm, '<hr>');
+
+      // Wrap in paragraphs if not already wrapped
+      if (!html.includes('<p>') && !html.includes('<h') && !html.includes('<ul>') && !html.includes('<ol>') && !html.includes('<pre>')) {
+        html = '<p>' + html + '</p>';
+      }
+
+      // Clean up list formatting
+      html = html.replace(/(<li>.*<\/li>)/g, function(match) {
+        if (!match.includes('<ul>') && !match.includes('<ol>')) {
+          return '<ul>' + match + '</ul>';
+        }
+        return match;
+      });
+
+      return html;
+    }
+
+    // Global function that the Rust backend will call
+    window.updateContent = function(messageType, data) {
+      console.log('🎯 AI Response Window: updateContent called with:', messageType, data);
+      
+      const contentElement = document.getElementById('content');
+      const statusElement = document.getElementById('status-text');
+      
+      switch(messageType) {
+        case 'stream':
+        case 'stream-token':
+          // Handle streaming tokens with optimized first token display
+          const token = data.token || data.text || '';
+          if (token) {
+            // Initialize response text container if it doesn't exist (IMMEDIATE)
+            let responseTextElement = document.getElementById('response-text');
+            if (!responseTextElement) {
+              // Clear loading immediately and show streaming container
+              contentElement.innerHTML = '<div class="response-text streaming-active" id="response-text"></div>';
+              responseTextElement = document.getElementById('response-text');
+              responseTextElement.dataset.rawText = '';
+              
+              // Update status immediately for first token
+              statusElement.textContent = 'Streaming...';
+              console.log('🚀 First token - initialized streaming container');
+            } else {
+              responseTextElement.classList.add('streaming-active');
+            }
+            
+            // Accumulate raw text
+            responseTextElement.dataset.rawText += token;
+            
+            // For first few tokens, use direct text insertion for speed
+            if (responseTextElement.dataset.rawText.length < 100) {
+              // Direct text insertion for immediate display (no markdown processing)
+              responseTextElement.textContent = responseTextElement.dataset.rawText;
+              // Auto-scroll immediately
+              contentElement.scrollTop = contentElement.scrollHeight;
+            } else {
+              // Use markdown processing for longer content
+              const processedHtml = processMarkdown(responseTextElement.dataset.rawText);
+              // Use immediate update for better performance
+              responseTextElement.innerHTML = processedHtml;
+              contentElement.scrollTop = contentElement.scrollHeight;
+            }
+          }
+          break;
+          
+        case 'complete':
+          // Handle completion
+          const finalText = data.text || '';
+          if (finalText) {
+            // Process the final markdown text
+            const processedHtml = processMarkdown(finalText);
+            contentElement.innerHTML = `<div class="response-text">${processedHtml}</div>`;
+          } else {
+            // If no final text, just remove streaming class from existing element
+            const responseTextElement = document.getElementById('response-text');
+            if (responseTextElement) {
+              responseTextElement.classList.remove('streaming-active');
+            }
+          }
+          statusElement.textContent = 'Complete';
+          
+          // Auto-scroll to bottom
+          contentElement.scrollTop = contentElement.scrollHeight;
+          break;
+          
+        case 'error':
+          // Handle errors
+          const errorMsg = data.error || 'Unknown error occurred';
+          contentElement.innerHTML = `<div class="error">❌ Error: ${errorMsg}</div>`;
+          statusElement.textContent = 'Error';
+          break;
+          
+        default:
+          console.warn('Unknown message type:', messageType);
+      }
+    };
+
+    // Minimize functionality with reset mechanism
+    let isMinimizing = false;
+    
+    function resetMinimizeState() {
+      isMinimizing = false;
+      console.log('🔄 Minimize state reset - ready for next click');
+    }
+    
+    document.getElementById('minimize-btn').addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      // Prevent multiple rapid clicks with shorter cooldown
+      if (isMinimizing) {
+        console.log('⚠️ Minimize in progress, ignoring click');
+        return;
+      }
+      
+      isMinimizing = true;
+      console.log('🔽 Minimize button clicked - attempting to hide window');
+      
+      // Auto-reset after 500ms to allow next click
+      setTimeout(resetMinimizeState, 500);
+      
+      // Try multiple hide methods in sequence for maximum compatibility
+      const hideAttempts = [
+        () => window.__TAURI__?.core?.invoke('hide_ai_response_window'),
+        () => window.__TAURI__?.invoke('hide_ai_response_window'),
+        () => window.__TAURI__?.window?.getCurrent()?.hide(),
+      ];
+      
+      (async () => {
+        for (const [index, attempt] of hideAttempts.entries()) {
+          try {
+            console.log(`🔽 Trying hide method ${index + 1}`);
+            await attempt();
+            console.log(`✅ Window hidden successfully with method ${index + 1}`);
+            return; // Exit on first successful attempt
+          } catch (err) {
+            console.warn(`❌ Hide method ${index + 1} failed:`, err);
+            if (index === hideAttempts.length - 1) {
+              console.error('❌ All hide methods failed');
+            }
+          }
+        }
+        
+        // Final fallback - force reset state even if hide failed
+        resetMinimizeState();
+      })();
+    });
+
+    // Disable right-click context menu and developer shortcuts
+    function disableContextMenu(e) {
+      e.preventDefault();
+      return false;
+    }
+
+    function disableSelection(e) {
+      e.preventDefault();
+      return false;
+    }
+
+    function disableDevShortcuts(e) {
+      // Disable F12, Ctrl+Shift+I, Ctrl+U, etc.
+      if ((e.ctrlKey && e.shiftKey && e.keyCode === 73) || // Ctrl+Shift+I
+          (e.ctrlKey && e.shiftKey && e.keyCode === 74) || // Ctrl+Shift+J
+          (e.ctrlKey && e.keyCode === 85) ||               // Ctrl+U
+          (e.keyCode === 123)) {                           // F12
+        e.preventDefault();
+        return false;
+      }
+    }
+
+    // Add event listeners to disable context menu and shortcuts
+    document.addEventListener('contextmenu', disableContextMenu);
+    document.addEventListener('keydown', disableDevShortcuts);
+    document.addEventListener('selectstart', disableSelection);
+    document.addEventListener('dragstart', disableSelection);
+
+    // Initialize the window
+    console.log('🚀 AI Response Window: Initialized and ready with context menu disabled');
+    
+    // Test function for debugging
+    window.testUpdate = function() {
+      window.updateContent('stream-token', { token: 'Hello, this is a test response! ' });
+      setTimeout(() => {
+        window.updateContent('stream-token', { token: 'This is streaming text. ' });
+      }, 1000);
+      setTimeout(() => {
+        window.updateContent('complete', { text: 'Final complete response shown here.' });
+      }, 2000);
+    };
+  </script>
+</body>
+</html>
