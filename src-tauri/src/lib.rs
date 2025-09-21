@@ -330,6 +330,12 @@ struct GenerateAnswerPayload {
     company: Option<String>,
     position: Option<String>,
     job_description: Option<String>,
+    // Database storage fields - optional for backward compatibility
+    session_id: Option<String>,
+    question_number: Option<i32>,
+    category: Option<String>,
+    difficulty_level: Option<String>,
+    expected_duration: Option<i32>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -521,7 +527,31 @@ async fn generate_ai_answer(
         context.job_description = Some(job_description);
     }
     
-    match provider {
+    // Database storage: Save question first (if session_id provided)
+    let question_id = if let Some(session_id) = &payload.session_id {
+        info!("💾 Saving interview question to database (general) for session: {}", session_id);
+        match database::postgres::save_interview_question(
+            session_id.clone(),
+            payload.question.clone(),
+            payload.question_number.unwrap_or(1),
+            payload.category.clone().unwrap_or_else(|| "general".to_string()),
+            payload.difficulty_level.clone().unwrap_or_else(|| "medium".to_string()),
+            payload.expected_duration.unwrap_or(300), // 5 minutes default
+        ).await {
+            Ok(id) => {
+                info!("✅ Question saved to database with ID: {}", id);
+                Some(id)
+            },
+            Err(e) => {
+                warn!("⚠️ Failed to save question to database: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+    
+    let result = match provider {
         AIProvider::OpenAI => {
             info!("Using OpenAI provider");
             state.ensure_openai_client()?;
@@ -554,7 +584,37 @@ async fn generate_ai_answer(
                 .await
                 .map_err(|e| e.to_string())
         }
+    };
+    
+    // Database storage: Save answer after generation completes successfully
+    match &result {
+        Ok(answer) => {
+            if let Some(q_id) = question_id {
+                info!("💾 Saving AI answer to database (general) for question ID: {}", q_id);
+                let provider_type = match provider {
+                    AIProvider::OpenAI => "openai_generated",
+                    AIProvider::Pollinations => "pollinations_generated",
+                };
+                match database::postgres::save_interview_answer(
+                    q_id,
+                    answer.clone(),
+                    provider_type.to_string(),
+                ).await {
+                    Ok(answer_id) => {
+                        info!("✅ Answer saved to database with ID: {}", answer_id);
+                    },
+                    Err(e) => {
+                        warn!("⚠️ Failed to save answer to database: {}", e);
+                    }
+                }
+            }
+        },
+        Err(_) => {
+            // Don't save failed generations
+        }
     }
+    
+    result
 }
 
 // New command: generate answer via Pollinations using backend (adds required headers)
@@ -581,13 +641,63 @@ async fn pollinations_generate_answer(
     if let Some(company) = payload.company { context.company = Some(company); }
     if let Some(position) = payload.position { context.position = Some(position); }
     if let Some(job_description) = payload.job_description { context.job_description = Some(job_description); }
+    
+    // Database storage: Save question first (if session_id provided)
+    let question_id = if let Some(session_id) = &payload.session_id {
+        info!("💾 Saving interview question to database (pollinations) for session: {}", session_id);
+        match database::postgres::save_interview_question(
+            session_id.clone(),
+            payload.question.clone(),
+            payload.question_number.unwrap_or(1),
+            payload.category.clone().unwrap_or_else(|| "general".to_string()),
+            payload.difficulty_level.clone().unwrap_or_else(|| "medium".to_string()),
+            payload.expected_duration.unwrap_or(300), // 5 minutes default
+        ).await {
+            Ok(id) => {
+                info!("✅ Question saved to database with ID: {}", id);
+                Some(id)
+            },
+            Err(e) => {
+                warn!("⚠️ Failed to save question to database: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     let model = pollinations::PollinationsModel::from_string(&payload.model)
         .map_err(|e| format!("Invalid Pollinations model: {}", e))?;
 
-    client.generate_answer(&payload.question, &context, model)
+    let result = client.generate_answer(&payload.question, &context, model)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string());
+        
+    // Database storage: Save answer after generation completes successfully
+    match &result {
+        Ok(answer) => {
+            if let Some(q_id) = question_id {
+                info!("💾 Saving AI answer to database (pollinations) for question ID: {}", q_id);
+                match database::postgres::save_interview_answer(
+                    q_id,
+                    answer.clone(),
+                    "pollinations_backend_generated".to_string(),
+                ).await {
+                    Ok(answer_id) => {
+                        info!("✅ Answer saved to database with ID: {}", answer_id);
+                    },
+                    Err(e) => {
+                        warn!("⚠️ Failed to save answer to database: {}", e);
+                    }
+                }
+            }
+        },
+        Err(_) => {
+            // Don't save failed generations
+        }
+    }
+    
+    result
 }
 
 // New command: Generate streaming answer via Pollinations GET endpoint
@@ -619,6 +729,30 @@ async fn pollinations_generate_answer_streaming(
     let model = pollinations::PollinationsModel::from_string(&payload.model)
         .map_err(|e| format!("Invalid Pollinations model: {}", e))?;
     let model_clone = model.clone(); // Clone for fallback use
+    
+    // Database storage: Save question first (if session_id provided)
+    let question_id = if let Some(session_id) = &payload.session_id {
+        info!("💾 Saving interview question to database for session: {}", session_id);
+        match database::postgres::save_interview_question(
+            session_id.clone(),
+            payload.question.clone(),
+            payload.question_number.unwrap_or(1),
+            payload.category.clone().unwrap_or_else(|| "general".to_string()),
+            payload.difficulty_level.clone().unwrap_or_else(|| "medium".to_string()),
+            payload.expected_duration.unwrap_or(300), // 5 minutes default
+        ).await {
+            Ok(id) => {
+                info!("✅ Question saved to database with ID: {}", id);
+                Some(id)
+            },
+            Err(e) => {
+                warn!("⚠️ Failed to save question to database: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     // Immediately show the AI response window for faster response (no await)
     let app_handle_show = app_handle.clone();
@@ -737,6 +871,24 @@ async fn pollinations_generate_answer_streaming(
                             }
                         });
                         let _ = app_handle.emit("ai-stream-complete", fallback_response.clone());
+                        
+                        // Database storage: Save fallback answer
+                        if let Some(q_id) = question_id {
+                            info!("💾 Saving fallback answer to database for question ID: {}", q_id);
+                            match database::postgres::save_interview_answer(
+                                q_id,
+                                fallback_response.clone(),
+                                "ai_generated_fallback".to_string(),
+                            ).await {
+                                Ok(answer_id) => {
+                                    info!("✅ Fallback answer saved to database with ID: {}", answer_id);
+                                },
+                                Err(e) => {
+                                    warn!("⚠️ Failed to save fallback answer to database: {}", e);
+                                }
+                            }
+                        }
+                        
                         return Ok(fallback_response);
                     },
                     Err(e) => {
@@ -772,6 +924,24 @@ async fn pollinations_generate_answer_streaming(
             });
             
             let _ = app_handle.emit("ai-stream-complete", full_response.clone());
+            
+            // Database storage: Save full answer after streaming completes
+            if let Some(q_id) = question_id {
+                info!("💾 Saving full AI answer to database for question ID: {}", q_id);
+                match database::postgres::save_interview_answer(
+                    q_id,
+                    full_response.clone(),
+                    "ai_generated".to_string(),
+                ).await {
+                    Ok(answer_id) => {
+                        info!("✅ Answer saved to database with ID: {}", answer_id);
+                    },
+                    Err(e) => {
+                        warn!("⚠️ Failed to save answer to database: {}", e);
+                    }
+                }
+            }
+            
             Ok(full_response)
         },
         Err(error_message) => {
@@ -824,6 +994,30 @@ async fn pollinations_generate_answer_post_streaming(
 
     let model = pollinations::PollinationsModel::from_string(&payload.model)
         .map_err(|e| format!("Invalid Pollinations model: {}", e))?;
+    
+    // Database storage: Save question first (if session_id provided)
+    let question_id = if let Some(session_id) = &payload.session_id {
+        info!("💾 Saving interview question to database (POST streaming) for session: {}", session_id);
+        match database::postgres::save_interview_question(
+            session_id.clone(),
+            payload.question.clone(),
+            payload.question_number.unwrap_or(1),
+            payload.category.clone().unwrap_or_else(|| "general".to_string()),
+            payload.difficulty_level.clone().unwrap_or_else(|| "medium".to_string()),
+            payload.expected_duration.unwrap_or(300), // 5 minutes default
+        ).await {
+            Ok(id) => {
+                info!("✅ Question saved to database with ID: {}", id);
+                Some(id)
+            },
+            Err(e) => {
+                warn!("⚠️ Failed to save question to database: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     // Immediately show the AI response window for faster response (no await)
     let app_handle_show = app_handle.clone();
@@ -904,6 +1098,24 @@ async fn pollinations_generate_answer_post_streaming(
                     error!("Failed to send completion signal to UI: {}", e);
                 }
             });
+            
+            // Database storage: Save full answer after POST streaming completes
+            if let Some(q_id) = question_id {
+                info!("💾 Saving full AI answer to database (POST streaming) for question ID: {}", q_id);
+                match database::postgres::save_interview_answer(
+                    q_id,
+                    full_response.clone(),
+                    "ai_generated_post".to_string(),
+                ).await {
+                    Ok(answer_id) => {
+                        info!("✅ Answer saved to database with ID: {}", answer_id);
+                    },
+                    Err(e) => {
+                        warn!("⚠️ Failed to save answer to database: {}", e);
+                    }
+                }
+            }
+            
             Ok(full_response)
         },
         Err(e) => {
