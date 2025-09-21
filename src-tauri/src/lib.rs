@@ -532,8 +532,8 @@ async fn generate_ai_answer(
         info!("💾 Saving interview question to database (general) for session: {}", session_id);
         match database::postgres::save_interview_question(
             session_id.clone(),
-            payload.question.clone(),
             payload.question_number.unwrap_or(1),
+            payload.question.clone(),
             payload.category.clone().unwrap_or_else(|| "general".to_string()),
             payload.difficulty_level.clone().unwrap_or_else(|| "medium".to_string()),
             payload.expected_duration.unwrap_or(300), // 5 minutes default
@@ -596,9 +596,12 @@ async fn generate_ai_answer(
                     AIProvider::Pollinations => "pollinations_generated",
                 };
                 match database::postgres::save_interview_answer(
+                    payload.session_id.as_ref().unwrap().clone(),
                     q_id,
                     answer.clone(),
-                    provider_type.to_string(),
+                    300, // Default 5 minutes response time
+                    None, // No AI feedback for now
+                    None, // No AI score for now
                 ).await {
                     Ok(answer_id) => {
                         info!("✅ Answer saved to database with ID: {}", answer_id);
@@ -647,8 +650,8 @@ async fn pollinations_generate_answer(
         info!("💾 Saving interview question to database (pollinations) for session: {}", session_id);
         match database::postgres::save_interview_question(
             session_id.clone(),
-            payload.question.clone(),
             payload.question_number.unwrap_or(1),
+            payload.question.clone(),
             payload.category.clone().unwrap_or_else(|| "general".to_string()),
             payload.difficulty_level.clone().unwrap_or_else(|| "medium".to_string()),
             payload.expected_duration.unwrap_or(300), // 5 minutes default
@@ -679,9 +682,12 @@ async fn pollinations_generate_answer(
             if let Some(q_id) = question_id {
                 info!("💾 Saving AI answer to database (pollinations) for question ID: {}", q_id);
                 match database::postgres::save_interview_answer(
+                    payload.session_id.as_ref().unwrap().clone(),
                     q_id,
                     answer.clone(),
-                    "pollinations_backend_generated".to_string(),
+                    300, // Default 5 minutes response time
+                    None, // No AI feedback for now
+                    None, // No AI score for now
                 ).await {
                     Ok(answer_id) => {
                         info!("✅ Answer saved to database with ID: {}", answer_id);
@@ -735,8 +741,8 @@ async fn pollinations_generate_answer_streaming(
         info!("💾 Saving interview question to database for session: {}", session_id);
         match database::postgres::save_interview_question(
             session_id.clone(),
-            payload.question.clone(),
             payload.question_number.unwrap_or(1),
+            payload.question.clone(),
             payload.category.clone().unwrap_or_else(|| "general".to_string()),
             payload.difficulty_level.clone().unwrap_or_else(|| "medium".to_string()),
             payload.expected_duration.unwrap_or(300), // 5 minutes default
@@ -876,9 +882,12 @@ async fn pollinations_generate_answer_streaming(
                         if let Some(q_id) = question_id {
                             info!("💾 Saving fallback answer to database for question ID: {}", q_id);
                             match database::postgres::save_interview_answer(
+                                payload.session_id.as_ref().unwrap().clone(),
                                 q_id,
                                 fallback_response.clone(),
-                                "ai_generated_fallback".to_string(),
+                                300, // Default 5 minutes response time
+                                None, // No AI feedback for now
+                                None, // No AI score for now
                             ).await {
                                 Ok(answer_id) => {
                                     info!("✅ Fallback answer saved to database with ID: {}", answer_id);
@@ -929,9 +938,12 @@ async fn pollinations_generate_answer_streaming(
             if let Some(q_id) = question_id {
                 info!("💾 Saving full AI answer to database for question ID: {}", q_id);
                 match database::postgres::save_interview_answer(
+                    payload.session_id.as_ref().unwrap().clone(),
                     q_id,
                     full_response.clone(),
-                    "ai_generated".to_string(),
+                    300, // Default 5 minutes response time
+                    None, // No AI feedback for now
+                    None, // No AI score for now
                 ).await {
                     Ok(answer_id) => {
                         info!("✅ Answer saved to database with ID: {}", answer_id);
@@ -1000,8 +1012,8 @@ async fn pollinations_generate_answer_post_streaming(
         info!("💾 Saving interview question to database (POST streaming) for session: {}", session_id);
         match database::postgres::save_interview_question(
             session_id.clone(),
-            payload.question.clone(),
             payload.question_number.unwrap_or(1),
+            payload.question.clone(),
             payload.category.clone().unwrap_or_else(|| "general".to_string()),
             payload.difficulty_level.clone().unwrap_or_else(|| "medium".to_string()),
             payload.expected_duration.unwrap_or(300), // 5 minutes default
@@ -1103,9 +1115,12 @@ async fn pollinations_generate_answer_post_streaming(
             if let Some(q_id) = question_id {
                 info!("💾 Saving full AI answer to database (POST streaming) for question ID: {}", q_id);
                 match database::postgres::save_interview_answer(
+                    payload.session_id.as_ref().unwrap().clone(),
                     q_id,
                     full_response.clone(),
-                    "ai_generated_post".to_string(),
+                    300, // Default 5 minutes response time
+                    None, // No AI feedback for now
+                    None, // No AI score for now
                 ).await {
                     Ok(answer_id) => {
                         info!("✅ Answer saved to database with ID: {}", answer_id);
