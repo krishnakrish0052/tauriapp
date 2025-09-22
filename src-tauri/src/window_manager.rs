@@ -1,5 +1,5 @@
 use tauri::{AppHandle, WebviewWindow, LogicalSize, PhysicalSize, PhysicalPosition, Manager};
-use log::{info, warn, error};
+use log::{info, warn};
 use serde::{Serialize, Deserialize};
 use anyhow::Result;
 use std::sync::{Arc, Mutex};
@@ -336,7 +336,7 @@ pub fn get_monitors_info(app_handle: &AppHandle) -> Result<Vec<serde_json::Value
         if has_changes || cache.is_empty() {
             info!("🖥️ Getting monitors information...");
             
-            for (i, (key, info)) in current_monitors.iter().enumerate() {
+            for (i, (_key, info)) in current_monitors.iter().enumerate() {
                 info!("🖥️ Monitor {}: {}x{} (scale: {:.2})", 
                       i + 1, info.width, info.height, info.scale_factor);
             }

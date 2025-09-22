@@ -17,17 +17,50 @@ pub struct DatabaseManager {
 
 impl DatabaseManager {
     pub async fn new() -> Result<Self> {
-        // Read individual database configuration variables (same as shared.rs)
-        let host = std::env::var("DB_HOST").unwrap_or_else(|_| "localhost".to_string());
-        let port = std::env::var("DB_PORT").unwrap_or_else(|_| "5432".to_string()).parse().unwrap_or(5432);
-        let dbname = std::env::var("DB_NAME").unwrap_or_else(|_| "mockmate_db".to_string());
-        let user = std::env::var("DB_USER").unwrap_or_else(|_| "mockmate_user".to_string());
-        let password = std::env::var("DB_PASSWORD").unwrap_or_else(|_| "".to_string());
+        // Read database configuration from compile-time embedded variables (build.rs)
+        // Fall back to runtime env vars for development
+        let host = if let Some(value) = option_env!("DB_HOST") {
+            value.to_string()
+        } else {
+            std::env::var("DB_HOST").unwrap_or_else(|_| "localhost".to_string())
+        };
+        
+        let port = if let Some(value) = option_env!("DB_PORT") {
+            value.to_string()
+        } else {
+            std::env::var("DB_PORT").unwrap_or_else(|_| "5432".to_string())
+        };
+        
+        let dbname = if let Some(value) = option_env!("DB_NAME") {
+            value.to_string()
+        } else {
+            std::env::var("DB_NAME").unwrap_or_else(|_| "mockmate_db".to_string())
+        };
+        
+        let user = if let Some(value) = option_env!("DB_USER") {
+            value.to_string()
+        } else {
+            std::env::var("DB_USER").unwrap_or_else(|_| "mockmate_user".to_string())
+        };
+        
+        let password = if let Some(value) = option_env!("DB_PASSWORD") {
+            value.to_string()
+        } else {
+            std::env::var("DB_PASSWORD").unwrap_or_else(|_| "".to_string())
+        };
 
+        // Debug logging to show configuration source
+        info!("🔧 Database config source check:");
+        info!("  DB_HOST: {} (embedded: {})", host, option_env!("DB_HOST").is_some());
+        info!("  DB_PORT: {} (embedded: {})", port, option_env!("DB_PORT").is_some());
+        info!("  DB_NAME: {} (embedded: {})", dbname, option_env!("DB_NAME").is_some());
+        info!("  DB_USER: {} (embedded: {})", user, option_env!("DB_USER").is_some());
+        info!("  DB_PASSWORD: [REDACTED] (embedded: {})", option_env!("DB_PASSWORD").is_some());
+        
         // Construct database URL from individual components
         let database_url = format!("postgres://{}:{}@{}:{}/{}", user, password, host, port, dbname);
 
-        info!("Connecting to database: {}@{}:{}/{}", user, host, port, dbname);
+        info!("🔗 Connecting to database: {}@{}:{}/{}", user, host, port, dbname);
 
         let mut cfg = Config::new();
         cfg.url = Some(database_url);

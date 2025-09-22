@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useResponsiveWindow } from '@/hooks/useResponsiveWindow';
 import NotificationDialog from '@/components/NotificationDialog';
+import ScreenshotQA from '@/components/ScreenshotQA';
 import './styles/streaming.css';
 // Using Material Icons instead of lucide-react to avoid antivirus issues
 
@@ -190,13 +191,33 @@ function App() {
     return () => clearTimeout(timer);
   }, [state.currentScreen, state.aiResponseVisible]);
   
+  // Debounced resize to prevent height accumulation from rapid resize events
+  const resizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastResizeHeightRef = useRef<number>(0);
+  
   // Also trigger resize on mount and when content changes (HEIGHT ONLY)
   useEffect(() => {
     const resizeObserver = new ResizeObserver(async () => {
-      if (contentRef.current) {
+      if (!contentRef.current) return;
+      
+      // Clear existing timeout
+      if (resizeTimeoutRef.current) {
+        clearTimeout(resizeTimeoutRef.current);
+      }
+      
+      // Debounce resize to prevent rapid consecutive calls
+      resizeTimeoutRef.current = setTimeout(async () => {
+        if (!contentRef.current) return;
+        
         const rect = contentRef.current.getBoundingClientRect();
         const contentHeight = Math.ceil(rect.height);
-        // Don't use contentWidth from getBoundingClientRect - it's DPI affected
+        
+        // Prevent unnecessary resizes if height hasn't changed significantly
+        if (Math.abs(contentHeight - lastResizeHeightRef.current) < 5) {
+          return;
+        }
+        
+        lastResizeHeightRef.current = contentHeight;
         
         // CRITICAL FIX: Account for DPI scaling in ResizeObserver height calculation
         const devicePixelRatio = window.devicePixelRatio || 1;
@@ -208,15 +229,21 @@ function App() {
           // ONLY resize height - preserve DPI-managed width
           const currentSize = await invoke('get_window_info') as any;
           if (currentSize && currentSize.width) {
+            // Add max height constraint to prevent runaway growth
+            const maxHeight = 800 * devicePixelRatio; // Max 800px logical height
+            const constrainedHeight = Math.min(physicalContentHeight, maxHeight);
+            
             await invoke('resize_main_window', {
               width: currentSize.width,        // Preserve DPI-managed width
-              height: physicalContentHeight   // Use physical pixels for height
+              height: constrainedHeight       // Use constrained physical pixels for height
             });
+            
+            console.log(`✅ Resized to height: ${constrainedHeight}px (constrained from ${physicalContentHeight}px)`);
           }
         } catch (error) {
           console.error('❌ ResizeObserver resize failed:', error);
         }
-      }
+      }, 150); // 150ms debounce
     });
     
     if (contentRef.current) {
@@ -225,6 +252,9 @@ function App() {
     
     return () => {
       resizeObserver.disconnect();
+      if (resizeTimeoutRef.current) {
+        clearTimeout(resizeTimeoutRef.current);
+      }
     };
   }, []);
 
@@ -1388,44 +1418,6 @@ function App() {
     }
   };
 
-  // Screen analysis
-  const analyzeScreen = async () => {
-    if (state.isLoading) return;
-    
-    setState(prev => ({ ...prev, isLoading: true, isStreaming: true }));
-    
-    try {
-      // Reset response window size first (using DPI-FIXED below-main enhanced window)
-      console.log('📰 SCREEN: Resetting AI response window (DPI-FIXED below-main enhanced)...');
-      await invoke('reset_ai_response_window_enhanced_below_size').catch(err => {
-        console.warn('⚠️ Failed to reset DPI-fixed AI response window size:', err);
-        // Try to create the window if it doesn't exist
-        invoke('create_ai_response_window_enhanced_below').catch(e => 
-          console.warn('⚠️ Failed to create DPI-fixed below-main enhanced window:', e)
-        );
-      });
-      
-      // Expand main window for screen analysis response
-      await autoResize(true, 'main');
-      
-      const payload = {
-        model: state.selectedModel,
-        provider: 'pollinations',
-        company: state.session?.companyName || null,
-        position: state.session?.jobTitle || null,
-        job_description: null,
-        system_prompt: null,
-      };
-      
-      await invoke('answer_screenshot_questions_streaming', { payload });
-      console.log('Screen Q&A started...');
-    } catch (error) {
-      console.error('Failed to analyze screen:', error);
-      setState(prev => ({ ...prev, isLoading: false, isStreaming: false }));
-      // Collapse window on error
-      await autoResize(false, 'main');
-    }
-  };
 
 
 
@@ -1770,15 +1762,17 @@ function App() {
                 <span className="text-xs">AI</span>
               </Button>
               
-              <Button 
-                onClick={analyzeScreen}
-                className="font-medium text-white bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 border-0 rounded transition-all duration-200 px-4 py-1 text-xs h-6 flex items-center gap-0.5 min-w-[100px]"
-                title="Screenshot & Answer Questions"
-                disabled={state.isLoading}
-              >
-                <span className="material-icons text-xs">screenshot_monitor</span>
-                <span className="text-xs">Q&A</span>
-              </Button>
+              <ScreenshotQA
+                selectedModel={state.selectedModel}
+                isLoading={state.isLoading}
+                setIsLoading={(isLoading: boolean) => setState(prev => ({ ...prev, isLoading }))}
+                setIsStreaming={(isStreaming: boolean) => setState(prev => ({ ...prev, isStreaming }))}
+                sessionDetails={{
+                  companyName: state.session.companyName,
+                  jobTitle: state.session.jobTitle,
+                }}
+                onError={showNotification}
+              />
               
               {/* Input field - Takes remaining space */}
               <Input
