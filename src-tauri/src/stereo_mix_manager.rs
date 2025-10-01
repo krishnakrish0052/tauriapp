@@ -7,30 +7,48 @@ use serde_json::json;
 pub struct StereoMixManager;
 
 impl StereoMixManager {
-    /// Check if Stereo Mix is currently enabled
+    /// Check if Stereo Mix is currently enabled using Windows API
     pub fn is_stereo_mix_enabled() -> Result<bool> {
-        info!("Checking if Stereo Mix is enabled...");
+        info!("Checking if Stereo Mix is enabled using Windows API...");
         
-        // Use CPAL to check if a Stereo Mix device is available
-        use cpal::traits::{DeviceTrait, HostTrait};
-        let host = cpal::default_host();
-        
-        if let Ok(input_devices) = host.input_devices() {
-            for device in input_devices {
-                if let Ok(name) = device.name() {
-                    let name_lower = name.to_lowercase();
-                    if name_lower.contains("stereo mix") || 
-                       name_lower.contains("what u hear") || 
-                       name_lower.contains("wave out mix") {
-                        info!("Found Stereo Mix device: {}", name);
-                        return Ok(true);
-                    }
+        // Use PowerShell to enumerate audio devices
+        let powershell_cmd = r#"
+            $deviceEnumerator = New-Object -ComObject MMDeviceEnumerator
+            $devices = $deviceEnumerator.EnumAudioEndpoints(1, 1) # eCapture, DEVICE_STATE_ACTIVE
+            
+            for ($i = 0; $i -lt $devices.GetCount(); $i++) {
+                $device = $devices.Item($i)
+                $properties = $device.OpenPropertyStore(0)
+                $deviceName = $properties.GetValue([GUID]"{a45c254e-df1c-4efd-8020-67d146a850e0}", 2).GetValue()
+                
+                if ($deviceName -match "Stereo Mix|What U Hear|Wave Out Mix") {
+                    Write-Output "FOUND:$deviceName"
                 }
             }
-        }
+        "#;
         
-        warn!("No Stereo Mix device found");
-        Ok(false)
+        match Command::new("powershell")
+            .args(&["-Command", powershell_cmd])
+            .output() {
+            Ok(output) => {
+                let output_str = String::from_utf8_lossy(&output.stdout);
+                if output_str.contains("FOUND:") {
+                    let device_name = output_str.lines()
+                        .find(|line| line.starts_with("FOUND:"))
+                        .map(|line| &line[6..]) // Remove "FOUND:" prefix
+                        .unwrap_or("Unknown");
+                    info!("Found active Stereo Mix device: {}", device_name);
+                    Ok(true)
+                } else {
+                    warn!("No active Stereo Mix device found");
+                    Ok(false)
+                }
+            }
+            Err(e) => {
+                error!("Failed to check for Stereo Mix devices: {}", e);
+                Ok(false)
+            }
+        }
     }
 
     /// Attempt to enable Stereo Mix using PowerShell commands
@@ -281,9 +299,9 @@ impl StereoMixManager {
         Ok("Could not automatically enable Stereo Mix. Please enable it manually in the Recording devices window that just opened.".to_string())
     }
 
-    /// Check system capabilities for Stereo Mix
+    /// Check system capabilities for Stereo Mix using Windows API
     pub fn check_stereo_mix_capability() -> Result<serde_json::Value> {
-        info!("Checking system Stereo Mix capabilities...");
+        info!("Checking system Stereo Mix capabilities using Windows API...");
         
         let mut capabilities = json!({
             "stereo_mix_available": false,
@@ -292,41 +310,64 @@ impl StereoMixManager {
             "system_info": {}
         });
         
-        // Check for Stereo Mix availability
-        use cpal::traits::{DeviceTrait, HostTrait};
-        let host = cpal::default_host();
-        let mut alternative_devices = Vec::new();
+        // PowerShell script to enumerate all audio devices
+        let powershell_cmd = r#"
+            $deviceEnumerator = New-Object -ComObject MMDeviceEnumerator
+            
+            # Check active capture devices
+            $devices = $deviceEnumerator.EnumAudioEndpoints(1, 1) # eCapture, DEVICE_STATE_ACTIVE
+            for ($i = 0; $i -lt $devices.GetCount(); $i++) {
+                $device = $devices.Item($i)
+                $properties = $device.OpenPropertyStore(0)
+                $deviceName = $properties.GetValue([GUID]"{a45c254e-df1c-4efd-8020-67d146a850e0}", 2).GetValue()
+                
+                if ($deviceName -match "Stereo Mix|What U Hear|Wave Out Mix") {
+                    Write-Output "STEREO_MIX_ACTIVE:$deviceName"
+                } elseif ($deviceName -match "loopback|mix") {
+                    Write-Output "ALTERNATIVE_ACTIVE:$deviceName"
+                }
+            }
+            
+            # Check disabled capture devices
+            $devices = $deviceEnumerator.EnumAudioEndpoints(1, 4) # eCapture, DEVICE_STATE_DISABLED
+            for ($i = 0; $i -lt $devices.GetCount(); $i++) {
+                $device = $devices.Item($i)
+                $properties = $device.OpenPropertyStore(0)
+                $deviceName = $properties.GetValue([GUID]"{a45c254e-df1c-4efd-8020-67d146a850e0}", 2).GetValue()
+                
+                if ($deviceName -match "Stereo Mix|What U Hear|Wave Out Mix") {
+                    Write-Output "STEREO_MIX_DISABLED:$deviceName"
+                } elseif ($deviceName -match "loopback|mix") {
+                    Write-Output "ALTERNATIVE_DISABLED:$deviceName"
+                }
+            }
+        "#;
         
-        // Check input devices
-        if let Ok(input_devices) = host.input_devices() {
-            for device in input_devices {
-                if let Ok(name) = device.name() {
-                    let name_lower = name.to_lowercase();
-                    if name_lower.contains("stereo mix") || 
-                       name_lower.contains("what u hear") || 
-                       name_lower.contains("wave out mix") {
+        match Command::new("powershell")
+            .args(&["-Command", powershell_cmd])
+            .output() {
+            Ok(output) => {
+                let output_str = String::from_utf8_lossy(&output.stdout);
+                let mut alternative_devices = Vec::new();
+                
+                for line in output_str.lines() {
+                    if line.starts_with("STEREO_MIX_ACTIVE:") {
                         capabilities["stereo_mix_available"] = json!(true);
-                    } else if name_lower.contains("loopback") || 
-                              name_lower.contains("mix") {
-                        alternative_devices.push(name);
+                    } else if line.starts_with("STEREO_MIX_DISABLED:") {
+                        capabilities["requires_manual_enable"] = json!(true);
+                    } else if line.starts_with("ALTERNATIVE_ACTIVE:") || line.starts_with("ALTERNATIVE_DISABLED:") {
+                        let device_name = line.split(':').nth(1).unwrap_or("Unknown");
+                        alternative_devices.push(device_name.to_string());
                     }
                 }
+                
+                capabilities["alternative_devices"] = json!(alternative_devices);
+            }
+            Err(e) => {
+                error!("Failed to check system capabilities: {}", e);
+                capabilities["requires_manual_enable"] = json!(true);
             }
         }
-        
-        // Check output devices for loopback capability
-        if let Ok(output_devices) = host.output_devices() {
-            for device in output_devices {
-                if let Ok(name) = device.name() {
-                    if device.supported_input_configs().is_ok() {
-                        alternative_devices.push(format!("{} (Loopback)", name));
-                    }
-                }
-            }
-        }
-        
-        capabilities["alternative_devices"] = json!(alternative_devices);
-        capabilities["requires_manual_enable"] = json!(!capabilities["stereo_mix_available"].as_bool().unwrap_or(false));
         
         // System info
         capabilities["system_info"] = json!({

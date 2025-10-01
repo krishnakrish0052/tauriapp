@@ -27,6 +27,225 @@ html, body {
   -webkit-touch-callout: none;
 }
 
+/* GLOBAL TOOLTIP DISABLING - Remove ALL possible tooltips */
+*[title] {
+  title: '' !important;
+}
+
+*[aria-label] {
+  aria-label: '' !important;
+}
+
+*[data-tooltip] {
+  data-tooltip: '' !important;
+}
+
+*[data-tip] {
+  data-tip: '' !important;
+}
+
+/* Hide all tooltip-like elements */
+.tooltip, [role="tooltip"], .tippy-tooltip, .react-tooltip {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+}
+
+/* STEALTH MODE: COMPLETE ELIMINATION of all hover effects, tooltips, and cursor indicators */
+.stealth-mode {
+  /* COMPLETE TOOLTIP AND HOVER TEXT REMOVAL */
+  * {
+    pointer-events: auto !important; /* Keep functionality but remove visual feedback */
+  }
+  
+  /* NUCLEAR TOOLTIP REMOVAL - Remove ALL possible tooltip attributes */
+  *[title],
+  *[data-title],
+  *[aria-label],
+  *[data-tooltip],
+  *[data-tip],
+  *[data-original-title],
+  *[data-bs-title],
+  *[data-toggle="tooltip"] {
+    title: '' !important;
+    data-title: '' !important;
+    aria-label: '' !important;
+    data-tooltip: '' !important;
+    data-tip: '' !important;
+    data-original-title: '' !important;
+    data-bs-title: '' !important;
+  }
+  
+  /* Remove ALL alt text that might show on hover */
+  img[alt] {
+    alt: '' !important;
+  }
+  
+  /* Remove placeholder text */
+  *[placeholder] {
+    placeholder: '' !important;
+  }
+  
+  /* HIDE ALL POSSIBLE TOOLTIP ELEMENTS */
+  .tooltip,
+  .tippy-tooltip,
+  .tippy-box,
+  .react-tooltip,
+  .ui-tooltip,
+  .tooltipster-base,
+  [data-testid*="tooltip"],
+  [class*="tooltip"],
+  [id*="tooltip"],
+  [role="tooltip"],
+  .popover,
+  [class*="popover"],
+  [data-popper-placement] {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    position: absolute !important;
+    top: -9999px !important;
+    left: -9999px !important;
+    z-index: -999 !important;
+  }
+  
+  /* DISABLE BROWSER NATIVE TOOLTIPS */
+  * {
+    -webkit-user-select: none !important;
+    -moz-user-select: none !important;
+    -ms-user-select: none !important;
+    user-select: none !important;
+  }
+  
+  /* BLOCK ALL HOVER PSEUDO-ELEMENTS */
+  *::before:hover,
+  *::after:hover {
+    content: none !important;
+    display: none !important;
+  }
+  
+  /* Disable all hover effects globally */
+  *:hover {
+    cursor: default !important;
+    transform: none !important;
+    box-shadow: none !important;
+    background-color: inherit !important;
+    color: inherit !important;
+    border-color: inherit !important;
+    text-decoration: none !important;
+    opacity: inherit !important;
+    background-image: none !important;
+    filter: none !important;
+  }
+  
+  /* Disable specific hover classes */
+  .mockmate-utility-btn:hover {
+    transform: none !important;
+    background: rgba(0, 0, 0, 0.8) !important;
+    color: var(--text-secondary) !important;
+  }
+  
+  .mockmate-action-btn:hover {
+    transform: none !important;
+    background: rgba(0, 0, 0, 0.8) !important;
+    border-color: var(--border) !important;
+  }
+  
+  .mockmate-action-btn.primary:hover {
+    background: linear-gradient(135deg, var(--accent), rgba(0, 212, 255, 0.8)) !important;
+    box-shadow: none !important;
+  }
+  
+  .mockmate-send-btn:hover {
+    transform: none !important;
+    box-shadow: var(--shadow-sm) !important;
+  }
+  
+  .mockmate-control-item:hover {
+    color: var(--text-secondary) !important;
+  }
+  
+  .custom-select:hover {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border-color: var(--border) !important;
+  }
+  
+  /* Disable all animations that could be visible */
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+  
+  /* Hide cursor changes */
+  * {
+    cursor: default !important;
+  }
+  
+  /* Remove focus indicators */
+  *:focus {
+    outline: none !important;
+    box-shadow: none !important;
+    border-color: inherit !important;
+  }
+  
+  /* Disable button active states */
+  *:active {
+    transform: none !important;
+    box-shadow: none !important;
+    background-color: inherit !important;
+  }
+  
+  /* Hide context menu completely */
+  * {
+    -webkit-context-menu: none !important;
+    -webkit-user-select: none !important;
+    -webkit-touch-callout: none !important;
+    user-select: none !important;
+  }
+  
+  /* Hide autocomplete dropdowns */
+  input {
+    autocomplete: off !important;
+  }
+  
+  /* Remove selection highlighting */
+  *::selection {
+    background: transparent !important;
+  }
+  
+  *::-moz-selection {
+    background: transparent !important;
+  }
+  
+  /* Disable drag and drop visual feedback */
+  * {
+    -webkit-user-drag: none !important;
+    user-drag: none !important;
+    -webkit-user-select: none !important;
+    -moz-user-select: none !important;
+    -ms-user-select: none !important;
+  }
+}
+
+/* Global stealth utility class */
+.stealth-no-tooltip {
+  title: none !important;
+}
+
+.stealth-no-hover:hover {
+  cursor: default !important;
+  transform: none !important;
+  box-shadow: none !important;
+  background-color: inherit !important;
+  color: inherit !important;
+  border-color: inherit !important;
+}
+
+.stealth-no-cursor * {
+  cursor: default !important;
+}
+
 @layer base {
   :root {
     /* MockMate Design System Variables */

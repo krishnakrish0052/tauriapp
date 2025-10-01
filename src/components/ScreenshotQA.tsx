@@ -116,7 +116,6 @@ const ScreenshotQA: React.FC<ScreenshotQAProps> = ({
       onClick={handleScreenshotQA}
       className="font-medium text-white bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 border-0 rounded transition-all duration-200 px-4 py-1 text-xs h-6 flex items-center gap-0.5 min-w-[100px] shadow-lg"
       disabled={isLoading || isCapturing}
-      title="🔥🎯 ULTRA Q&A: 100% accurate multi-question analysis with advanced AI (Gemini-Search/OpenAI-Reasoning optimized for maximum interview success)"
     >
       {isCapturing ? (
         <>

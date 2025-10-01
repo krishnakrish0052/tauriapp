@@ -8,6 +8,7 @@ use std::thread;
 use base64::prelude::*;
 use std::collections::VecDeque;
 use crate::wasapi_loopback::{WasapiLoopback, AudioDevice};
+// use crate::windows_audio_capture::{WindowsAudioCapture, test_system_audio_capture}; // Temporarily disabled
 
 static AUDIO_STATE: std::sync::OnceLock<Arc<Mutex<AudioCaptureState>>> = std::sync::OnceLock::new();
 
@@ -16,6 +17,7 @@ struct AudioCaptureState {
     config: AudioConfig,
     captured_samples: VecDeque<f32>,
     wasapi_loopback: Option<WasapiLoopback>,
+    windows_audio_capture: Option<WindowsAudioCapture>, // Native Windows WASAPI capture
     is_mic_recording: bool,
     audio_callback: Option<Box<dyn Fn(Vec<u8>) + Send + Sync>>,
 }
@@ -27,6 +29,7 @@ fn get_audio_state() -> Arc<Mutex<AudioCaptureState>> {
             config: AudioConfig::default(),
             captured_samples: VecDeque::new(),
             wasapi_loopback: None,
+            windows_audio_capture: None,
             is_mic_recording: false,
             audio_callback: None,
         }))
@@ -231,24 +234,61 @@ pub fn capture_audio() -> Result<()> {
 
 pub fn start_system_audio_capture() -> Result<()> {
     info!("Starting system audio capture...");
+    let state = get_audio_state();
+    let mut state = state.lock().unwrap();
+    
+    // If already recording, stop first
+    if state.is_recording {
+        warn!("Audio capture is already running, stopping first");
+        drop(state); // Drop lock before calling stop_capture
+        stop_capture()?;
+        state = get_audio_state().lock().unwrap(); // Re-acquire lock
+    }
+    
+    // First try to find the default output device and use it for loopback
+    // This should work on Windows without requiring Stereo Mix
+    info!("Attempting direct loopback from default output device...");
     
     let devices = list_all_audio_devices()?;
     
+    // Try to find the default output device that supports loopback
+    let default_output_device = devices.iter().find(|d| 
+        d.device_type == "output" && d.is_default && d.supports_loopback
+    );
+    
+    if let Some(device) = default_output_device {
+        info!("✅ Found default output device with loopback support: {}", device.name);
+        drop(state); // Drop lock before calling another function
+        return capture_audio_from_device(Some(device.name.clone()), false);
+    } else {
+        info!("⚠️ Default output device doesn't support loopback, trying other methods...");
+    }
+    
+    // Fallback to old method using stereo mix or other devices
+    info!("Falling back to Stereo Mix or other loopback devices...");
+    
+    let devices = list_all_audio_devices()?;
+    
+    // Try Stereo Mix first (requires it to be enabled)
     if let Some(stereo_mix) = devices.iter().find(|d| 
         d.name.to_lowercase().contains("stereo mix") || 
         d.name.to_lowercase().contains("what u hear")
     ) {
         info!("Found Stereo Mix device: {}", stereo_mix.name);
+        drop(state); // Drop lock before calling another function
         return capture_audio_from_device(Some(stereo_mix.name.clone()), false);
     }
     
+    // Then try other loopback-capable devices
     let loopback_devices = list_loopback_devices()?;
     if let Some(device) = loopback_devices.first() {
         info!("Using loopback-capable device: {}", device.name);
+        drop(state); // Drop lock before calling another function
         return capture_audio_from_device(Some(device.name.clone()), false);
     }
     
     warn!("No Stereo Mix or loopback devices found, using default capture");
+    drop(state); // Drop lock before calling another function
     capture_audio_from_device(None, false)
 }
 
@@ -381,6 +421,15 @@ pub fn get_captured_samples() -> Vec<f32> {
     let state = get_audio_state();
     let state = state.lock().unwrap();
     
+    // First try to get samples from native Windows capture
+    if let Some(ref windows_capture) = state.windows_audio_capture {
+        let samples = windows_capture.get_samples();
+        if !samples.is_empty() {
+            return samples;
+        }
+    }
+    
+    // Fall back to wasapi_loopback if Windows capture is not active
     if let Some(ref wasapi_loopback) = state.wasapi_loopback {
         wasapi_loopback.get_captured_samples()
     } else {
@@ -412,6 +461,15 @@ pub fn stop_capture() -> Result<()> {
         return Ok(());
     }
     
+    // Stop Windows WASAPI capture if active
+    if let Some(ref mut windows_capture) = state.windows_audio_capture {
+        match windows_capture.stop_capture() {
+            Ok(_) => info!("Windows WASAPI capture stopped successfully"),
+            Err(e) => error!("Failed to stop Windows WASAPI capture: {}", e),
+        }
+    }
+    
+    // Stop regular WASAPI loopback capture if active
     if let Some(ref mut wasapi_loopback) = state.wasapi_loopback {
         match wasapi_loopback.stop_capture() {
             Ok(_) => info!("WASAPI loopback capture stopped successfully"),
@@ -430,6 +488,7 @@ pub fn cleanup_audio_capture() {
     let mut state = state.lock().unwrap();
     
     state.wasapi_loopback = None;
+    state.windows_audio_capture = None;
     info!("Audio capture cleanup completed");
 }
 
@@ -516,4 +575,59 @@ pub fn test_capture_audio(duration_secs: u64) -> Result<()> {
     
     info!("Test audio capture completed");
     Ok(())
+}
+
+/// Test the native Windows WASAPI system audio capture directly
+pub fn test_native_windows_system_audio_capture(duration_secs: u64) -> Result<String> {
+    info!("🧪 Testing native Windows WASAPI system audio capture for {} seconds...", duration_secs);
+    
+    #[cfg(target_os = "windows")]
+    {
+        let mut windows_capture = WindowsAudioCapture::new();
+        
+        // Start capture
+        windows_capture.start_system_audio_capture()
+            .map_err(|e| anyhow!("Failed to start Windows WASAPI capture: {}", e))?;
+        
+        info!("⏱️ Recording system audio for {} seconds...", duration_secs);
+        thread::sleep(Duration::from_secs(duration_secs));
+        
+        // Get samples
+        let samples = windows_capture.get_samples();
+        let sample_count = samples.len();
+        
+        // Stop capture
+        windows_capture.stop_capture()
+            .map_err(|e| anyhow!("Failed to stop Windows WASAPI capture: {}", e))?;
+        
+        if sample_count > 0 {
+            // Calculate some basic audio statistics
+            let max_amplitude = samples.iter().map(|&s| s.abs()).fold(0.0f32, |a, b| a.max(b));
+            let avg_amplitude = samples.iter().map(|&s| s.abs()).sum::<f32>() / sample_count as f32;
+            
+            let result_msg = format!(
+                "✅ Native Windows WASAPI capture successful!\n📊 Captured {} samples ({:.2} seconds of audio)\n🔊 Max amplitude: {:.6}\n📈 Avg amplitude: {:.6}\n🎵 Sample rate: {} Hz, Channels: {}",
+                sample_count,
+                sample_count as f32 / (windows_capture.get_sample_rate() * windows_capture.get_channels() as u32) as f32,
+                max_amplitude,
+                avg_amplitude,
+                windows_capture.get_sample_rate(),
+                windows_capture.get_channels()
+            );
+            
+            info!("{}", result_msg);
+            Ok(result_msg)
+        } else {
+            let error_msg = "❌ No audio samples captured - system may be silent or capture failed";
+            error!("{}", error_msg);
+            Err(anyhow!(error_msg))
+        }
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        let error_msg = "❌ Native Windows WASAPI capture is only supported on Windows";
+        error!("{}", error_msg);
+        Err(anyhow!(error_msg))
+    }
 }

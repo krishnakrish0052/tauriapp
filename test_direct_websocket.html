@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Direct Deepgram WebSocket Transcription</title>
+</head>
+<body>
+    <h1>🚀 Test Direct Deepgram WebSocket (Nova-3)</h1>
+    
+    <h2>Direct WebSocket Commands (Nova-3 Compatible):</h2>
+    <button onclick="startDirectTranscription()">▶️ Start Direct WebSocket Transcription</button>
+    <button onclick="stopDirectTranscription()">⏹️ Stop Direct WebSocket Transcription</button>
+    <button onclick="checkDirectStatus()">🔍 Check Direct Status</button>
+    
+    <h2>Legacy SDK Commands (for comparison):</h2>
+    <button onclick="startLegacyTranscription()">▶️ Start Legacy SDK Transcription</button>
+    <button onclick="stopLegacyTranscription()">⏹️ Stop Legacy SDK Transcription</button>
+    
+    <h2>Transcription Results:</h2>
+    <div id="results" style="border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: scroll; background: #f9f9f9;"></div>
+    
+    <h2>Status:</h2>
+    <div id="status" style="font-family: monospace; background: #000; color: #0f0; padding: 10px;"></div>
+
+    <script>
+        const { invoke } = window.__TAURI__.core;
+        const { listen } = window.__TAURI__.event;
+
+        // Set up event listeners for transcription results
+        listen('transcription-result', (event) => {
+            const result = event.payload;
+            const resultsDiv = document.getElementById('results');
+            const timestamp = new Date().toLocaleTimeString();
+            const confidence = (result.confidence * 100).toFixed(1);
+            const finalText = result.is_final ? '✅ FINAL' : '⏳ INTERIM';
+            
+            resultsDiv.innerHTML += 
+                `<div style="margin: 5px 0; padding: 5px; ${result.is_final ? 'background: #e8f5e8;' : 'background: #fff9e6;'}">
+                    <strong>[${timestamp}] ${finalText}</strong> (${confidence}%)<br>
+                    "${result.text}" 
+                    <small style="color: #666;">(${result.source})</small>
+                </div>`;
+            resultsDiv.scrollTop = resultsDiv.scrollHeight;
+        });
+
+        // Listen for transcription status updates
+        listen('transcription-status', (event) => {
+            const status = event.payload;
+            updateStatus(`Status: ${status.status} | Method: ${status.method || status.connection_type || 'N/A'} | Model: ${status.model || 'N/A'}`);
+        });
+
+        // Listen for VAD events
+        listen('vad-speech-start', (event) => {
+            updateStatus('🔊 VAD: Speech started');
+        });
+
+        listen('vad-speech-end', (event) => {
+            updateStatus('🔇 VAD: Speech ended');
+        });
+
+        // Listen for errors
+        listen('transcription-error', (event) => {
+            updateStatus(`❌ Error: ${event.payload.error} (${event.payload.source})`);
+        });
+
+        function updateStatus(message) {
+            const statusDiv = document.getElementById('status');
+            const timestamp = new Date().toLocaleTimeString();
+            statusDiv.innerHTML += `[${timestamp}] ${message}<br>`;
+            statusDiv.scrollTop = statusDiv.scrollHeight;
+        }
+
+        // Direct WebSocket functions (Nova-3)
+        async function startDirectTranscription() {
+            try {
+                await invoke('start_pluely_deepgram_direct_transcription');
+                updateStatus('🚀 Started Direct WebSocket transcription with Nova-3');
+            } catch (error) {
+                updateStatus(`❌ Failed to start direct transcription: ${error}`);
+            }
+        }
+
+        async function stopDirectTranscription() {
+            try {
+                const result = await invoke('stop_pluely_deepgram_direct_transcription');
+                updateStatus(`✅ Stopped Direct transcription: ${result}`);
+            } catch (error) {
+                updateStatus(`❌ Failed to stop direct transcription: ${error}`);
+            }
+        }
+
+        async function checkDirectStatus() {
+            try {
+                const isActive = await invoke('is_pluely_deepgram_direct_active');
+                updateStatus(`🔍 Direct WebSocket status: ${isActive ? 'RUNNING' : 'STOPPED'}`);
+            } catch (error) {
+                updateStatus(`❌ Failed to check direct status: ${error}`);
+            }
+        }
+
+        // Legacy SDK functions (for comparison)
+        async function startLegacyTranscription() {
+            try {
+                await invoke('start_pluely_deepgram_transcription');
+                updateStatus('🚀 Started Legacy SDK transcription');
+            } catch (error) {
+                updateStatus(`❌ Failed to start legacy transcription: ${error}`);
+            }
+        }
+
+        async function stopLegacyTranscription() {
+            try {
+                await invoke('stop_pluely_deepgram_transcription');
+                updateStatus('✅ Stopped Legacy transcription');
+            } catch (error) {
+                updateStatus(`❌ Failed to stop legacy transcription: ${error}`);
+            }
+        }
+
+        // Initialize
+        updateStatus('🔄 Direct Deepgram WebSocket Test Interface Ready');
+        updateStatus('📊 Configuration: Nova-3 model, direct WebSocket, 44.1kHz audio');
+        updateStatus('💡 Try speaking to test live transcription with Nova-3!');
+    </script>
+</body>
+</html>

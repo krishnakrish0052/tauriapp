@@ -8,16 +8,32 @@ use anyhow::Result;
 use std::sync::Arc;
 use parking_lot::Mutex;
 
-pub mod audio;
+// pub mod audio; // Old cpal-based audio system replaced
+mod audio_wasapi; // New WASAPI-based audio system
+use audio_wasapi as audio; // Use WASAPI audio as default
 mod websocket;
 pub mod openai;
 pub mod pollinations;
-mod wasapi_loopback;
-pub mod realtime_transcription;
+mod wasapi_loopback_stub;
+use wasapi_loopback_stub as wasapi_loopback;
+pub mod windows_audio_capture; // Native Windows WASAPI loopback audio capture
+// pub mod universal_audio_capture; // Universal system audio capture that doesn't rely on Stereo Mix
+// pub mod realtime_transcription; // DISABLED - now using Deepgram JS SDK in frontend
+pub mod pluely_audio; // Pluely-style efficient audio capture
 pub mod accessibility_reader; // Windows Accessibility API text reader
 pub mod window_manager; // DPI-aware window management
 pub mod permissions; // Permission management for audio access
 pub mod stereo_mix_manager; // Windows Stereo Mix automatic enablement
+// Stealth mode modules for secure interview operation
+mod stealth_hotkeys_simple;
+mod task_manager_stealth_simple;
+mod real_stealth; // REAL stealth implementation for actual process hiding
+// mod advanced_stealth; // REMOVED - Advanced stealth module removed
+mod dll_injection_stealth; // DLL injection stealth for maximum hiding
+mod taskbar_manager; // Windows taskbar hiding functionality
+// Re-export simplified modules with original names
+use stealth_hotkeys_simple as stealth_hotkeys;
+use task_manager_stealth_simple as task_manager_stealth;
 
 // New Phase 2 modules
 pub mod database;
@@ -49,6 +65,7 @@ pub fn run() -> Result<()> {
             check_audio_status,
             start_audio_with_config,
             test_audio_capture,
+            test_native_windows_system_audio_capture,
             send_manual_question,
             connect_to_session,
             close_application,
@@ -67,13 +84,18 @@ pub fn run() -> Result<()> {
             reset_ai_response_window_size,
             create_ai_response_window_enhanced_below,
             reset_ai_response_window_enhanced_below_size,
-            // Real-time transcription commands
-            realtime_transcription::start_microphone_transcription,
-            realtime_transcription::start_system_audio_transcription,
-            realtime_transcription::stop_transcription,
-            realtime_transcription::get_transcription_status,
-            realtime_transcription::get_deepgram_config,
-            realtime_transcription::test_deepgram_connection,
+            // Real-time transcription commands - DISABLED (using JavaScript SDK now)
+            // realtime_transcription::start_microphone_transcription,
+            // realtime_transcription::start_system_audio_transcription,
+            // realtime_transcription::stop_transcription,
+            // realtime_transcription::get_transcription_status,
+            // realtime_transcription::get_deepgram_config,
+            // realtime_transcription::test_deepgram_connection,
+            // Pluely audio capture commands
+            pluely_audio::start_pluely_system_audio_capture,
+            pluely_audio::stop_pluely_system_audio_capture,
+            pluely_audio::is_pluely_audio_active,
+            pluely_audio::test_pluely_system_audio_capture,
             generate_ai_answer,
             analyze_screen_content,
             update_interview_context,
@@ -160,11 +182,50 @@ pub fn run() -> Result<()> {
             stereo_mix_manager::enable_stereo_mix,
             stereo_mix_manager::open_recording_devices,
             stereo_mix_manager::get_stereo_mix_capabilities,
-            stereo_mix_manager::get_stereo_mix_instructions
+            stereo_mix_manager::get_stereo_mix_instructions,
+            // Universal Audio Capture commands - DISABLED
+            // detect_universal_audio_capabilities,
+            // start_universal_system_audio_capture,
+            // stop_universal_audio_capture,
+            // get_universal_audio_status,
+            // get_universal_audio_samples,
+            // Stealth Mode commands for secure interview operation
+            stealth_hotkeys::activate_stealth_mode,
+            stealth_hotkeys::deactivate_stealth_mode,
+            stealth_hotkeys::get_stealth_status,
+            stealth_hotkeys::test_stealth_hotkey,
+            // Task Manager stealth commands
+            task_manager_stealth::enable_task_manager_stealth,
+            task_manager_stealth::disable_task_manager_stealth,
+            task_manager_stealth::apply_advanced_stealth,
+            task_manager_stealth::get_task_manager_stealth_status,
+            // Taskbar management commands
+            taskbar_manager::hide_from_taskbar,
+            taskbar_manager::show_in_taskbar,
+            taskbar_manager::toggle_taskbar_visibility,
+            taskbar_manager::get_taskbar_status,
+            taskbar_manager::is_hidden_from_taskbar,
+            // REAL stealth commands for actual process hiding
+            real_stealth::activate_real_stealth,
+            real_stealth::deactivate_real_stealth,
+            real_stealth::get_real_stealth_status,
+            // ADVANCED stealth commands for ultimate process hiding - REMOVED
+            // advanced_stealth::activate_ultimate_stealth,
+            // advanced_stealth::deactivate_ultimate_stealth,
+            // advanced_stealth::get_ultimate_stealth_status,
+            // DLL injection stealth commands for maximum hiding
+            dll_injection_stealth::activate_dll_injection_stealth,
+            dll_injection_stealth::deactivate_dll_injection_stealth,
+            dll_injection_stealth::get_dll_injection_stealth_status
         ])
         .manage(AppState::new())
         .setup(|app| {
             info!("MockMate application starting up...");
+            
+            // Initialize stealth systems
+            stealth_hotkeys::initialize_stealth_hotkeys(app.handle().clone());
+            task_manager_stealth::initialize_task_manager_stealth();
+            info!("🕵️ Stealth systems initialized");
             
             // Handle command line arguments for protocol URLs
             let args: Vec<String> = std::env::args().collect();
@@ -219,13 +280,32 @@ pub fn run() -> Result<()> {
                 }
             }
             
-            // Initialize the real-time transcription service
-            realtime_transcription::init_transcription_service(app.handle().clone());
-            info!("✅ Real-time transcription service initialized");
             
             // Initialize the real-time accessibility monitoring service
             accessibility_reader::init_realtime_monitoring(app.handle().clone());
             info!("✅ Real-time accessibility monitoring service initialized");
+            
+            // Initialize stealth mode systems for secure interview operation
+            stealth_hotkeys::initialize_stealth_hotkeys(app.handle().clone());
+            info!("✅ Stealth hotkey system initialized");
+            
+            task_manager_stealth::initialize_task_manager_stealth();
+            info!("✅ Task Manager stealth system initialized");
+            
+            taskbar_manager::initialize_taskbar_manager(app.handle().clone());
+            info!("✅ Taskbar manager initialized");
+            
+            // Initialize REAL stealth system for actual process hiding
+            real_stealth::initialize_real_stealth();
+            info!("✅ REAL stealth system initialized for genuine process hiding");
+            
+            // Initialize ADVANCED stealth system for ultimate process hiding - REMOVED
+            // advanced_stealth::initialize_advanced_stealth();
+            // info!("🚀 ADVANCED stealth system initialized for ultimate process hiding");
+            
+            // Initialize DLL injection stealth system for maximum hiding
+            dll_injection_stealth::initialize_dll_injection_stealth();
+            info!("💩 DLL INJECTION stealth system initialized for maximum process hiding");
             
             // Get the main window and set capture protection + DPI-aware positioning
             match app.get_webview_window("main") {
@@ -1151,6 +1231,22 @@ async fn test_audio_capture(duration: u64) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn test_native_windows_system_audio_capture(duration: u64) -> Result<String, String> {
+    info!("🧪 Testing native Windows WASAPI system audio capture for {} seconds", duration);
+    
+    match audio::test_native_windows_system_audio_capture(duration) {
+        Ok(result) => {
+            info!("✅ Native Windows WASAPI test completed successfully");
+            Ok(result)
+        }
+        Err(e) => {
+            error!("❌ Native Windows WASAPI test failed: {}", e);
+            Err(format!("❌ Native Windows WASAPI test failed: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
 fn start_system_audio_capture() -> Result<String, String> {
     info!("Starting system audio capture...");
     match audio::start_system_audio_capture() {
@@ -1293,6 +1389,119 @@ fn save_audio_file_impl(is_mic: bool) -> Result<String, String> {
         }
     }
 }
+
+// Universal Audio Capture Commands - DISABLED
+// use universal_audio_capture::UniversalAudioCapture;
+// 
+// static UNIVERSAL_CAPTURE: std::sync::OnceLock<Arc<Mutex<UniversalAudioCapture>>> = std::sync::OnceLock::new();
+// 
+// fn get_universal_capture() -> Arc<Mutex<UniversalAudioCapture>> {
+//     UNIVERSAL_CAPTURE.get_or_init(|| {
+//         Arc::new(Mutex::new(UniversalAudioCapture::new()))
+//     }).clone()
+// }
+
+// #[tauri::command]
+// fn detect_universal_audio_capabilities() -> Result<Vec<serde_json::Value>, String> {
+//     info!("🔍 Detecting universal system audio capture capabilities...");
+//     
+//     // For now, return a simplified set of capabilities
+//     // This avoids the complex async/Send issues with the full implementation
+//     let capabilities = vec![
+//         serde_json::json!({
+//             "method": "WasapiLoopback",
+//             "device_name": "Default Audio Device",
+//             "is_available": true,
+//             "priority": 90,
+//             "description": "WASAPI Loopback (Default Output)"
+//         }),
+//         serde_json::json!({
+//             "method": "StereoMix",
+//             "device_name": "Stereo Mix",
+//             "is_available": false,
+//             "priority": 30,
+//             "description": "Stereo Mix (Fallback)"
+//         })
+//     ];
+//     
+//     info!("✅ Detected {} universal audio capture methods", capabilities.len());
+//     Ok(capabilities)
+// }
+
+// #[tauri::command]
+// fn start_universal_system_audio_capture() -> Result<String, String> {
+//     info!("🚀 Starting universal system audio capture...");
+//     
+//     // For now, delegate to the existing system audio capture
+//     // This provides immediate functionality while we refine the universal approach
+//     match audio::start_system_audio_capture() {
+//         Ok(()) => {
+//             info!("✅ Universal system audio capture started successfully");
+//             Ok("Universal system audio capture started successfully using WASAPI Loopback (44100Hz, 2 channels)".to_string())
+//         },
+//         Err(e) => {
+//             error!("❌ Failed to start universal system audio capture: {}", e);
+//             Err(format!("Failed to start universal audio capture: {}", e))
+//         }
+//     }
+// }
+
+// #[tauri::command]
+// fn stop_universal_audio_capture() -> Result<String, String> {
+//     info!("⏹️ Stopping universal system audio capture...");
+//     
+//     let capture_arc = get_universal_capture();
+//     let mut capture = capture_arc.lock();
+//     
+//     if !capture.is_recording() {
+//         return Ok("Universal audio capture is not currently running".to_string());
+//     }
+//     
+//     match capture.stop_capture() {
+//         Ok(()) => {
+//             info!("✅ Universal system audio capture stopped successfully");
+//             Ok("Universal system audio capture stopped successfully".to_string())
+//         },
+//         Err(e) => {
+//             error!("❌ Failed to stop universal system audio capture: {}", e);
+//             Err(format!("Failed to stop universal audio capture: {}", e))
+//         }
+//     }
+// }
+// 
+// #[tauri::command]
+// fn get_universal_audio_status() -> Result<serde_json::Value, String> {
+//     let capture_arc = get_universal_capture();
+//     let capture = capture_arc.lock();
+//     
+//     let is_recording = capture.is_recording();
+//     let current_method = capture.get_current_method()
+//         .map(|m| format!("{:?}", m));
+//     let sample_rate = capture.get_sample_rate();
+//     let channels = capture.get_channels();
+//     let capabilities_count = capture.get_capabilities().len();
+//     
+//     let status = serde_json::json!({
+//         "is_recording": is_recording,
+//         "current_method": current_method,
+//         "sample_rate": sample_rate,
+//         "channels": channels,
+//         "capabilities_detected": capabilities_count
+//     });
+//     
+//     Ok(status)
+// }
+// 
+// #[tauri::command]
+// fn get_universal_audio_samples() -> Result<Vec<f32>, String> {
+//     let capture_arc = get_universal_capture();
+//     let capture = capture_arc.lock();
+//     
+//     let samples = capture.get_captured_samples();
+//     info!("Retrieved {} universal audio samples", samples.len());
+//     
+//     Ok(samples)
+// }
 
 #[tauri::command]
 fn create_ai_response_window(app_handle: AppHandle) -> Result<String, String> {
@@ -3060,7 +3269,7 @@ async fn capture_screenshot() -> Result<ScreenshotResponse, String> {
                 
                 if actual_bytes_per_pixel >= 3.0 && actual_bytes_per_pixel <= 4.0 {
                     // Try to extract pixel data assuming some stride/padding
-                    let stride = (image_data.len() / height as usize);
+                    let stride = image_data.len() / height as usize;
                     let bytes_per_pixel = stride / width as usize;
                     
                     info!("📸 Detected stride: {}, bytes per pixel: {}", stride, bytes_per_pixel);
@@ -3070,7 +3279,7 @@ async fn capture_screenshot() -> Result<ScreenshotResponse, String> {
                         let mut extracted_pixels = Vec::new();
                         
                         for y in 0..height {
-                            let row_start = (y as usize * stride);
+                            let row_start = y as usize * stride;
                             let row_end = std::cmp::min(row_start + (width as usize * bytes_per_pixel), image_data.len());
                             
                             for x in 0..width as usize {

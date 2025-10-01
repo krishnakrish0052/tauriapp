@@ -336,6 +336,12 @@ impl WasapiLoopback {
                 let supports_loopback = device.supported_input_configs().is_ok();
                 if supports_loopback {
                     info!("    ✓ Supports loopback capture");
+                    
+                    // Try to get a default input config to verify it really works
+                    if let Ok(default_config) = device.default_input_config() {
+                        info!("    ✓ Confirmed loopback capability: {} Hz, {} channels", 
+                              default_config.sample_rate().0, default_config.channels());
+                    }
                 }
                 
                 devices.push(AudioDevice {
@@ -405,12 +411,21 @@ impl WasapiLoopback {
                 }
             }
         } else {
-            // For system audio capture, prioritize output devices with loopback
+            // For system audio capture, prioritize default output device with loopback first
+            if let Some(default_output) = host.default_output_device() {
+                if default_output.supported_input_configs().is_ok() {
+                    let name = default_output.name().unwrap_or("Unknown".to_string());
+                    info!("✅ Using default output device with loopback for system audio: {}", name);
+                    return Some(default_output);
+                }
+            }
+            
+            // Then try other output devices with loopback
             if let Ok(output_devices) = host.output_devices() {
                 for device in output_devices {
                     if device.supported_input_configs().is_ok() {
                         let name = device.name().unwrap_or("Unknown".to_string());
-                        info!("Using output device with loopback for system audio: {}", name);
+                        info!("✅ Using output device with loopback for system audio: {}", name);
                         return Some(device);
                     }
                 }

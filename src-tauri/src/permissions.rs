@@ -41,33 +41,30 @@ impl PermissionManager {
         }
     }
 
-    /// Check if microphone permission is granted
+    /// Check if microphone permission is granted using Windows API
     pub fn check_microphone_permission() -> Result<bool> {
-        // Try to access microphone using CPAL
-        use cpal::traits::{DeviceTrait, HostTrait};
-        
-        let host = cpal::default_host();
-        match host.default_input_device() {
-            Some(device) => {
-                match device.supported_input_configs() {
-                    Ok(mut configs) => {
-                        if configs.next().is_some() {
-                            info!("Microphone access available");
-                            Ok(true)
-                        } else {
-                            warn!("No input configurations available");
-                            Ok(false)
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to get input configs: {}", e);
-                        Ok(false)
-                    }
+        // Check Windows registry for microphone permission
+        match Command::new("reg")
+            .args(&[
+                "query", 
+                "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone", 
+                "/v", "Value"
+            ])
+            .output() {
+            Ok(output) => {
+                let output_str = String::from_utf8_lossy(&output.stdout);
+                if output_str.contains("Allow") {
+                    info!("Microphone access granted via registry check");
+                    Ok(true)
+                } else {
+                    warn!("Microphone access not granted - registry check failed");
+                    Ok(false)
                 }
             }
-            None => {
-                warn!("No default input device found");
-                Ok(false)
+            Err(e) => {
+                warn!("Failed to check microphone permission via registry: {}", e);
+                // Fallback: assume permission is granted if we can't check
+                Ok(true)
             }
         }
     }

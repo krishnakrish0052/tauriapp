@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { useResponsiveWindow } from '@/hooks/useResponsiveWindow';
 import NotificationDialog from '@/components/NotificationDialog';
 import ScreenshotQA from '@/components/ScreenshotQA';
+import LiveTranscription from '@/components/LiveTranscription';
 import './styles/streaming.css';
 // Using Material Icons instead of lucide-react to avoid antivirus issues
 
@@ -75,6 +76,9 @@ interface AppState {
     title: string;
     message: string;
   };
+  
+  // Real-time transcription
+  showTranscriptionPanel: boolean;
 }
 
 function App() {
@@ -121,6 +125,8 @@ function App() {
       title: '',
       message: '',
     },
+    // Real-time transcription
+    showTranscriptionPanel: false,
   });
 
   
@@ -371,19 +377,199 @@ function App() {
     updateWindowForScreen();
   }, [state.currentScreen, autoResize]);
 
-  // Set up transcription event listeners
+  // Set up stealth mode auto-activation and global hotkey listener
+  useEffect(() => {
+    let unlistenStealth: (() => void) | null = null;
+
+    const setupStealthMode = async () => {
+      try {
+        // Auto-activate stealth mode on app startup
+        console.log('🕵️ Auto-activating stealth mode...');
+        await invoke('activate_stealth_mode');
+        console.log('✅ Stealth mode activated automatically');
+
+        // Listen for stealth hotkey events
+        unlistenStealth = await listen('stealth-hotkey', (event: any) => {
+          const { action, hotkey_id } = event.payload;
+          console.log('🎯 Stealth hotkey triggered:', action, 'ID:', hotkey_id);
+          
+          // Handle hotkey actions
+          handleStealthHotkeyAction(action);
+        });
+        console.log('✅ Stealth hotkey listener set up successfully');
+      } catch (error) {
+        console.error('❌ Failed to setup stealth mode:', error);
+      }
+    };
+
+    setupStealthMode();
+
+    // Cleanup stealth mode on unmount
+    return () => {
+      if (unlistenStealth) {
+        unlistenStealth();
+      }
+      // Deactivate stealth mode when app unmounts
+      invoke('deactivate_stealth_mode').catch(() => {});
+    };
+  }, []);
+
+  // Handle stealth hotkey actions
+  const handleStealthHotkeyAction = async (action: string) => {
+    try {
+      const currentState = stateRef.current; // Use ref to get current state
+      
+      switch (action) {
+        case 'system_sound_toggle':
+          console.log('🔊 System audio toggle triggered - Current state:', currentState.isSystemSoundOn);
+          // Use existing toggleSystemAudio function for proper state management
+          await toggleSystemAudio();
+          break;
+          
+        case 'mic_toggle':
+          console.log('🎤 Microphone toggle triggered - Current state:', currentState.isMicOn);
+          // Use existing toggleMicrophone function for proper state management
+          await toggleMicrophone();
+          break;
+          
+        case 'ai_answer_trigger':
+          console.log('🤖 AI answer generation triggered');
+          // Trigger the AI button click
+          const aiButton = document.querySelector('button[class*="from-green-500"][class*="to-green-600"]');
+          if (aiButton) {
+            console.log('✅ Found AI button, clicking it');
+            (aiButton as HTMLButtonElement).click();
+          } else {
+            // Fallback: call generateAIAnswer directly
+            console.log('⚠️ AI button not found, calling generateAIAnswer directly');
+            await generateAIAnswer();
+          }
+          break;
+          
+        case 'window_toggle':
+          console.log('🪟 Window toggle triggered');
+          // Toggle window visibility
+          try {
+            await invoke('hide_main_window');
+            setTimeout(async () => {
+              await invoke('show_main_window');
+            }, 2000); // Show again after 2 seconds
+          } catch (err) {
+            console.error('Window toggle error:', err);
+          }
+          break;
+          
+        case 'analyze_screen':
+          console.log('📋 Ultra Q&A triggered');
+          // Find and click the Ultra Q&A button
+          const ultraQAButton = document.querySelector('button[class*="from-orange-500"][class*="to-orange-600"]');
+          if (ultraQAButton) {
+            console.log('✅ Found Ultra Q&A button, clicking it');
+            (ultraQAButton as HTMLButtonElement).click();
+          } else {
+            console.warn('⚠️ Ultra Q&A button not found');
+            // Fallback: try to call screenshot analysis directly
+            try {
+              const screenText = await invoke('analyze_screen_content');
+              setState(prev => ({ 
+                ...prev, 
+                transcriptionText: prev.transcriptionText + '\n[Screen]: ' + screenText
+              }));
+            } catch (err) {
+              console.error('Screen analysis error:', err);
+            }
+          }
+          break;
+          
+        case 'manual_input':
+          console.log('✍️ Manual input mode triggered');
+          // Focus on the "Ask a question..." input field
+          const inputElement = document.querySelector('input[placeholder="Ask a question..."]') || 
+                              document.querySelector('input[type="text"]') || 
+                              document.querySelector('textarea');
+          if (inputElement) {
+            console.log('✅ Found input field, focusing it');
+            (inputElement as HTMLInputElement).focus();
+            (inputElement as HTMLInputElement).select(); // Also select any existing text
+          } else {
+            console.warn('⚠️ Input field not found');
+          }
+          break;
+          
+        case 'submit_question':
+          console.log('📤 Submit question triggered');
+          // Find and click the Send button
+          const sendButton = document.querySelector('button[class*="from-blue-500"][class*="to-blue-600"]');
+          if (sendButton && !sendButton.hasAttribute('disabled')) {
+            console.log('✅ Found Send button, clicking it');
+            (sendButton as HTMLButtonElement).click();
+          } else {
+            // Fallback: try to submit directly
+            console.log('⚠️ Send button not found or disabled, trying direct submission');
+            const questionText = currentState.inputText.trim() || currentState.fullTranscription.trim();
+            if (questionText) {
+              await handleSubmit();
+            } else {
+              console.warn('No text to submit');
+            }
+          }
+          break;
+          
+        case 'clear_area':
+          console.log('🧹 Clear listening area triggered');
+          // Find and click the clear button (look for button with clear icon)
+          const clearButtons = document.querySelectorAll('button');
+          let clearButton: Element | null = null;
+          for (const btn of clearButtons) {
+            const icon = btn.querySelector('span.material-icons');
+            if (icon && icon.textContent?.includes('clear')) {
+              clearButton = btn;
+              break;
+            }
+          }
+          if (clearButton) {
+            console.log('✅ Found clear button, clicking it');
+            (clearButton as HTMLButtonElement).click();
+          } else {
+            // Fallback: clear directly
+            console.log('⚠️ Clear button not found, clearing directly');
+            setState(prev => ({
+              ...prev,
+              fullTranscription: '',
+              interimTranscription: '',
+              transcriptionText: 'Ready to assist you...',
+              inputText: '',
+              streamingText: '',
+              accumulatedAIResponse: ''
+            }));
+          }
+          break;
+          
+        default:
+          console.warn('Unknown stealth hotkey action:', action);
+      }
+    } catch (error) {
+      console.error('Error handling stealth hotkey action:', action, error);
+    }
+  };
+
+// Set up transcription event listeners
   useEffect(() => {
     let unlistenTranscription: (() => void) | null = null;
+    let unlistenSpeechStart: (() => void) | null = null;
+    let unlistenSpeechDetected: (() => void) | null = null;
+    let unlistenPluelyDebug: (() => void) | null = null;
+    let unlistenPluelyStatus: (() => void) | null = null;
+    let unlistenTranscriptionError: (() => void) | null = null;
 
-    const setupTranscriptionListener = async () => {
+    const setupListeners = async () => {
       try {
-        // Listen for transcription results from backend
+        // Listen for generic transcription results (if any)
         unlistenTranscription = await listen('transcription-result', (event: any) => {
           const payload = event.payload;
-          console.log('Transcription received:', payload);
+          console.log('📝 Transcription received from unified bridge:', payload);
           
           if (payload.is_final) {
-            // Final transcription - append to full transcription
             setState(prev => {
               const newFullTranscription = prev.fullTranscription 
                 ? prev.fullTranscription + ' ' + payload.text 
@@ -392,31 +578,69 @@ function App() {
               return {
                 ...prev,
                 fullTranscription: newFullTranscription,
-                interimTranscription: '', // Clear interim
+                interimTranscription: '',
                 transcriptionText: newFullTranscription
               };
             });
+            console.log('✅ Final transcription added to UI:', payload.text);
           } else {
-            // Interim transcription - show in interim field
             setState(prev => ({
               ...prev,
               interimTranscription: payload.text
             }));
+            console.log('⏳ Interim transcription:', payload.text);
           }
         });
-        console.log('Transcription listener set up successfully');
+        console.log('✅ Transcription listener set up successfully');
+
+        // Listen for Pluely speech start
+        unlistenSpeechStart = await listen('speech-start', () => {
+          console.log('🔈 Pluely: speech-start detected');
+          setState(prev => ({ ...prev, isTranscriptionActive: true }));
+        });
+
+        // Listen for Pluely speech-detected (WAV b64 payload)
+        unlistenSpeechDetected = await listen('speech-detected', (event: any) => {
+          console.log('🗣️ Pluely: speech-detected event, length:', (event.payload as string)?.length);
+          // Audio is now being processed by unified bridge automatically
+        });
+
+        // Listen for Pluely-Deepgram status updates
+        unlistenPluelyStatus = await listen('pluely-deepgram-status', (event: any) => {
+          console.log('📊 Pluely-Deepgram status:', event.payload);
+        });
+
+        // Listen for transcription errors from unified bridge
+        unlistenTranscriptionError = await listen('transcription-error', (event: any) => {
+          console.error('❌ Transcription error:', event.payload);
+          setState(prev => ({
+            ...prev,
+            notification: {
+              isOpen: true,
+              title: 'Transcription Error',
+              message: event.payload.error || 'Unknown transcription error',
+            }
+          }));
+        });
+
+        // Listen for Pluely debug events
+        unlistenPluelyDebug = await listen('pluely-audio-debug', (event: any) => {
+          console.log('🪵 [PluelyDebug]', event.payload);
+        });
       } catch (error) {
-        console.error('Failed to set up transcription listener:', error);
+        console.error('Failed to set up listeners:', error);
       }
     };
 
-    setupTranscriptionListener();
+    setupListeners();
 
-    // Cleanup on unmount
     return () => {
-      if (unlistenTranscription) {
-        unlistenTranscription();
-      }
+      if (unlistenTranscription) unlistenTranscription();
+      if (unlistenSpeechStart) unlistenSpeechStart();
+      if (unlistenSpeechDetected) unlistenSpeechDetected();
+      if (unlistenPluelyDebug) unlistenPluelyDebug();
+      if (unlistenPluelyStatus) unlistenPluelyStatus();
+      if (unlistenTranscriptionError) unlistenTranscriptionError();
     };
   }, []);
 
@@ -1083,38 +1307,61 @@ function App() {
   }, []);
 
   // Handle microphone toggle
-  const toggleMicrophone = async () => {
+  const toggleMicrophone = useCallback(async () => {
     try {
-      if (state.isMicOn) {
+      const currentState = stateRef.current;
+      console.log('🎤 Microphone toggle - Current state:', currentState.isMicOn);
+      
+      if (currentState.isMicOn) {
         // Stop transcription
+        console.log('🎤 Stopping microphone transcription...');
         await invoke('stop_transcription');
         setState(prev => ({ ...prev, isMicOn: false, isTranscriptionActive: false }));
+        console.log('🎤 Microphone turned OFF');
       } else {
         // Start microphone transcription
+        console.log('🎤 Starting microphone transcription...');
         await invoke('start_microphone_transcription');
         setState(prev => ({ ...prev, isMicOn: true, isTranscriptionActive: true }));
+        console.log('🎤 Microphone turned ON');
       }
     } catch (error) {
       console.error('Failed to toggle microphone:', error);
     }
-  };
+  }, []); // No dependencies since we use stateRef
 
-  // Handle system audio toggle
-  const toggleSystemAudio = async () => {
+// Handle system audio toggle (Unified Pluely-Deepgram integration)
+  const toggleSystemAudio = useCallback(async () => {
     try {
-      if (state.isSystemSoundOn) {
-        // Stop transcription
-        await invoke('stop_transcription');
-        setState(prev => ({ ...prev, isSystemSoundOn: false }));
+      const currentState = stateRef.current;
+      console.log('🔊 System audio toggle - Current state:', currentState.isSystemSoundOn);
+
+      if (currentState.isSystemSoundOn) {
+        // Stop unified Pluely-Deepgram transcription
+        console.log('🔊 Stopping unified Pluely-Deepgram transcription...');
+        await invoke('stop_pluely_deepgram_transcription');
+        setState(prev => ({ ...prev, isSystemSoundOn: false, isTranscriptionActive: false }));
+        console.log('🔊 System audio turned OFF (unified pipeline stopped)');
       } else {
-        // Start system audio transcription  
-        await invoke('start_system_audio_transcription');
-        setState(prev => ({ ...prev, isSystemSoundOn: true }));
+        // Start unified Pluely-Deepgram transcription
+        console.log('🔊 Starting unified Pluely-Deepgram transcription...');
+        await invoke('start_pluely_deepgram_transcription');
+        setState(prev => ({ ...prev, isSystemSoundOn: true, isTranscriptionActive: true }));
+        console.log('🔊 System audio turned ON (unified pipeline active)');
       }
     } catch (error) {
       console.error('Failed to toggle system audio:', error);
+      // Surface debug notification
+      setState(prev => ({
+        ...prev,
+        notification: {
+          isOpen: true,
+          title: 'System Audio Error',
+          message: (error as any)?.message || String(error),
+        }
+      }));
     }
-  };
+  }, []); // No dependencies since we use stateRef
 
   // Handle text input submission
   const handleSubmit = async () => {
@@ -1441,7 +1688,6 @@ function App() {
           <Button 
             onClick={closeWindow}
             className="w-4 h-4 bg-red-500/80 hover:bg-red-600 border-0 rounded-full p-0 flex items-center justify-center transition-all flex-shrink-0"
-            title="Close"
           >
             <span className="material-icons text-white text-xs">close</span>
           </Button>
@@ -1472,7 +1718,6 @@ function App() {
               onClick={connectToSession}
               className="font-medium text-white bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 border-0 rounded disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 px-3 py-1.5 text-xs whitespace-nowrap h-8 flex items-center gap-1 min-w-[70px]"
               disabled={!state.session.sessionId.trim() || state.isLoading}
-              title="Connect to Session"
             >
               {state.isLoading ? (
                 <>
@@ -1508,7 +1753,6 @@ function App() {
           <Button 
             onClick={closeWindow}
             className="w-4 h-4 bg-red-500/80 hover:bg-red-600 border-0 rounded-full p-0 flex items-center justify-center transition-all flex-shrink-0"
-            title="Close"
           >
             <span className="material-icons text-white text-xs">close</span>
           </Button>
@@ -1540,11 +1784,11 @@ function App() {
                 </div>
                 <div className="flex justify-between col-span-2">
                   <span className="text-gray-400">User:</span>
-                  <span className="text-white text-xs truncate" title={state.session.userId}>{state.session.userId}</span>
+                  <span className="text-white text-xs truncate">{state.session.userId}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-400">Type:</span>
-                  <span className="text-blue-300 text-xs truncate" title={state.session.jobTitle || 'Interview'}>
+                  <span className="text-blue-300 text-xs truncate">
                     {state.session.jobTitle ? state.session.jobTitle.substring(0, 8) + '...' : 'Interview'}
                   </span>
                 </div>
@@ -1562,7 +1806,6 @@ function App() {
                 onClick={startSession}
                 className="font-medium text-white bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 border-0 rounded disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 px-3 py-1.5 text-xs whitespace-nowrap h-8 flex items-center gap-1 min-w-[60px]"
                 disabled={state.isStartingSession}
-                title="Start Session"
               >
                 {state.isStartingSession ? (
                   <>
@@ -1580,7 +1823,6 @@ function App() {
               <Button 
                 onClick={() => setState(prev => ({ ...prev, currentScreen: 'session_connection' }))}
                 className="font-medium text-white bg-white/10 hover:bg-white/20 border border-white/25 rounded transition-all duration-200 px-3 py-1.5 text-xs whitespace-nowrap h-8 flex items-center gap-1 min-w-[50px]"
-                title="Go Back"
               >
                 <span className="material-icons text-xs">arrow_back</span>
                 <span className="text-xs">Back</span>
@@ -1596,7 +1838,7 @@ function App() {
   const renderMainScreen = () => {
     
     return (
-      <div className="w-full h-auto bg-black/70 backdrop-blur-md border border-white/20 rounded-lg shadow-lg">
+      <div className="w-full max-w-full h-auto bg-black/70 backdrop-blur-md border border-white/20 rounded-lg shadow-lg overflow-hidden" style={{ maxWidth: '100vw', width: '100vw' }}>
         {/* Compact Header - Same as session windows */}
         <div className="flex items-center justify-between border-b border-white/10 px-2 py-1 h-8">
           <div className="flex items-center gap-1">
@@ -1665,7 +1907,6 @@ function App() {
               className={`w-6 h-6 rounded p-0 border-0 flex items-center justify-center transition-all ${
                 state.isMicOn ? 'bg-blue-500/80 text-white shadow-lg' : 'bg-white/10 text-gray-300 hover:bg-white/20'
               }`}
-              title={state.isMicOn ? 'Stop microphone' : 'Start microphone'}
             >
               <i className="material-icons" style={{ fontSize: '16px' }}>{state.isMicOn ? 'mic' : 'mic_off'}</i>
             </Button>
@@ -1675,15 +1916,14 @@ function App() {
               className={`w-6 h-6 rounded p-0 border-0 flex items-center justify-center transition-all ${
                 state.isSystemSoundOn ? 'bg-blue-500/80 text-white shadow-lg' : 'bg-white/10 text-gray-300 hover:bg-white/20'
               }`}
-              title={state.isSystemSoundOn ? 'Stop system audio' : 'Start system audio'}
             >
               <i className="material-icons" style={{ fontSize: '16px' }}>{state.isSystemSoundOn ? 'volume_up' : 'volume_off'}</i>
             </Button>
             
+            
             <Button 
               onClick={disconnectSession}
               className="w-6 h-6 rounded p-0 border-0 bg-white/10 text-gray-300 hover:bg-white/20 flex items-center justify-center transition-all"
-              title="Disconnect Session"
             >
               <i className="material-icons" style={{ fontSize: '16px' }}>logout</i>
             </Button>
@@ -1691,7 +1931,6 @@ function App() {
             <Button 
               onClick={minimizeWindow}
               className="w-6 h-6 bg-gray-500/80 hover:bg-gray-600 border-0 rounded-full p-0 flex items-center justify-center transition-all flex-shrink-0"
-              title="Minimize"
             >
               <i className="material-icons text-white" style={{ fontSize: '16px' }}>minimize</i>
             </Button>
@@ -1699,7 +1938,6 @@ function App() {
             <Button 
               onClick={closeWindow}
               className="w-6 h-6 bg-red-500/80 hover:bg-red-600 border-0 rounded-full p-0 flex items-center justify-center transition-all flex-shrink-0"
-              title="Close"
             >
               <i className="material-icons text-white" style={{ fontSize: '16px' }}>close</i>
             </Button>
@@ -1707,19 +1945,19 @@ function App() {
         </div>
         
         {/* Ultra Compact Content Area - Two Row Layout */}
-        <div className="px-2 py-1">
-          <div className="flex flex-col gap-1">
+        <div className="px-2 py-1 w-full max-w-full">
+          <div className="flex flex-col gap-1 w-full max-w-full">
             {/* Live Transcription Area - Single Line with Horizontal Scroll */}
-            <div className="w-full bg-white/10 rounded px-2 py-2 relative h-[40px] flex items-center">
+            <div className="w-full max-w-full bg-white/10 rounded px-2 py-2 relative h-[40px] flex items-center overflow-hidden">
               <div 
                 ref={transcriptionRef}
-                className={`text-lg overflow-x-auto scrollbar-hide pr-6 whitespace-nowrap ${
+                className={`text-lg overflow-x-auto scrollbar-hide pr-6 whitespace-nowrap flex-1 ${
                   state.isTranscriptionActive ? 'text-white' : 'text-gray-300'
                 } ${state.interimTranscription ? 'text-blue-300' : ''} ${state.fullTranscription ? 'text-white' : ''}`}
                 style={{ 
                   lineHeight: '1.2',
-                  minWidth: '100%',
-                  display: 'inline-block'
+                  maxWidth: 'calc(100% - 2rem)',
+                  minWidth: '0'
                 }}
               >
                 {state.fullTranscription && (
@@ -1735,24 +1973,22 @@ function App() {
               <Button 
                 onClick={() => setState(prev => ({ ...prev, fullTranscription: '', interimTranscription: '', transcriptionText: 'Ready to assist you...' }))}
                 className="absolute top-1 right-1 w-5 h-5 bg-white/10 hover:bg-white/20 border-0 rounded p-0 flex items-center justify-center transition-all"
-                title="Clear transcription"
               >
                 <span className="material-icons text-gray-400 text-sm">clear</span>
               </Button>
             </div>
             
             {/* Function Buttons Row - Below Transcription */}
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 w-full max-w-full overflow-hidden">
               {/* AI Action Buttons */}
               <Button 
                 onClick={generateAIAnswer}
-                className={`font-medium text-white border-0 rounded disabled:opacity-50 transition-all duration-200 px-4 py-1 text-xs h-6 flex items-center gap-0.5 min-w-[158px] ${
+                className={`font-medium text-white border-0 rounded disabled:opacity-50 transition-all duration-200 px-4 py-1 text-xs h-6 flex items-center gap-0.5 min-w-[158px] flex-shrink-0 ${
                   state.isStreaming 
                     ? 'bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 shadow-lg' 
                     : 'bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700'
                 }`}
                 disabled={state.isLoading || (!state.fullTranscription && !state.inputText.trim())}
-                title="Generate AI Answer"
               >
                 {state.isStreaming ? (
                   <span className="material-icons animate-spin text-xs">hourglass_empty</span>
@@ -1762,24 +1998,26 @@ function App() {
                 <span className="text-xs">AI</span>
               </Button>
               
-              <ScreenshotQA
-                selectedModel={state.selectedModel}
-                isLoading={state.isLoading}
-                setIsLoading={(isLoading: boolean) => setState(prev => ({ ...prev, isLoading }))}
-                setIsStreaming={(isStreaming: boolean) => setState(prev => ({ ...prev, isStreaming }))}
-                sessionDetails={{
-                  companyName: state.session.companyName,
-                  jobTitle: state.session.jobTitle,
-                }}
-                onError={showNotification}
-              />
+              <div className="flex-shrink-0">
+                <ScreenshotQA
+                  selectedModel={state.selectedModel}
+                  isLoading={state.isLoading}
+                  setIsLoading={(isLoading: boolean) => setState(prev => ({ ...prev, isLoading }))}
+                  setIsStreaming={(isStreaming: boolean) => setState(prev => ({ ...prev, isStreaming }))}
+                  sessionDetails={{
+                    companyName: state.session.companyName,
+                    jobTitle: state.session.jobTitle,
+                  }}
+                  onError={showNotification}
+                />
+              </div>
               
               {/* Input field - Takes remaining space */}
               <Input
                 value={state.inputText}
                 onChange={(e) => setState(prev => ({ ...prev, inputText: e.target.value }))}
                 placeholder="Ask a question..."
-                className="flex-1 bg-white/15 border-white/25 text-white placeholder:text-gray-400 rounded focus:border-blue-400 focus:ring-1 focus:ring-blue-400/50 px-2 py-0.5 text-xs transition-all h-6"
+                className="flex-1 min-w-0 bg-white/15 border-white/25 text-white placeholder:text-gray-400 rounded focus:border-blue-400 focus:ring-1 focus:ring-blue-400/50 px-2 py-0.5 text-xs transition-all h-6"
                 onKeyPress={(e) => e.key === 'Enter' && handleSubmit()}
                 disabled={state.isLoading}
               />
@@ -1787,9 +2025,8 @@ function App() {
               {/* Send button */}
               <Button
                 onClick={handleSubmit}
-                className="font-medium text-white bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 border-0 rounded disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 px-3 py-1 text-xs h-6 flex items-center gap-0.5 min-w-[70px]"
+                className="font-medium text-white bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 border-0 rounded disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 px-3 py-1 text-xs h-6 flex items-center gap-0.5 min-w-[70px] flex-shrink-0"
                 disabled={state.isLoading || !state.inputText.trim()}
-                title="Send question"
               >
                 {state.isLoading ? (
                   <span className="material-icons animate-spin text-xs">hourglass_empty</span>
@@ -1798,9 +2035,26 @@ function App() {
                 )}
                 <span className="text-xs">Send</span>
               </Button>
+              
             </div>
           </div>
         </div>
+        
+        {/* Live Nova-3 Transcription Panel */}
+        <div className="mt-2">
+          <LiveTranscription
+            className="w-full"
+            onTranscriptionUpdate={(text, isFinal) => {
+              setState(prev => ({
+                ...prev,
+                fullTranscription: isFinal ? text : prev.fullTranscription,
+                interimTranscription: isFinal ? '' : text.replace(prev.fullTranscription, '').trim(),
+                transcriptionText: text || 'Ready to assist you...'
+              }));
+            }}
+          />
+        </div>
+        
       </div>
     );
   };
@@ -1808,12 +2062,13 @@ function App() {
   return (
     <div 
       ref={contentRef}
-      className="w-fit h-fit bg-transparent relative flex flex-col"
-      style={{ minWidth: '100vw' }}
+      className="w-screen h-fit bg-transparent relative flex flex-col"
+      style={{ maxWidth: '100vw' }}
     >
       {state.currentScreen === 'session_connection' && renderSessionConnectionScreen()}
       {state.currentScreen === 'confirmation' && renderConfirmationScreen()}
       {state.currentScreen === 'main' && renderMainScreen()}
+      
       
       {/* Responsive notification dialog */}
       <NotificationDialog

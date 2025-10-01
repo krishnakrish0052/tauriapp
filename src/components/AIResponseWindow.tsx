@@ -147,14 +147,12 @@ export const AIResponseWindow: React.FC<AIResponseWindowProps> = ({
           <Button 
             onClick={onClear}
             className="w-4 h-4 bg-white/10 hover:bg-white/20 border-0 rounded p-0 flex items-center justify-center transition-all"
-            title="Clear response"
           >
             <span className="material-icons text-gray-400 text-xs">clear</span>
           </Button>
           <Button 
             onClick={onClose}
             className="w-4 h-4 bg-red-500/80 hover:bg-red-600 border-0 rounded-full p-0 flex items-center justify-center transition-all flex-shrink-0"
-            title="Close AI Response"
           >
             <span className="material-icons text-white text-xs">close</span>
           </Button>
