@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { useResponsiveWindow } from '@/hooks/useResponsiveWindow';
 import NotificationDialog from '@/components/NotificationDialog';
 import ScreenshotQA from '@/components/ScreenshotQA';
-import LiveTranscription from '@/components/LiveTranscription';
+// import LiveTranscription from '@/components/LiveTranscription'; // Removed for testing
 import './styles/streaming.css';
 // Using Material Icons instead of lucide-react to avoid antivirus issues
 
@@ -561,6 +561,10 @@ function App() {
     let unlistenPluelyDebug: (() => void) | null = null;
     let unlistenPluelyStatus: (() => void) | null = null;
     let unlistenTranscriptionError: (() => void) | null = null;
+    // Microphone event listeners
+    let unlistenMicSpeechStart: (() => void) | null = null;
+    let unlistenMicSpeechDetected: (() => void) | null = null;
+    let unlistenMicDebug: (() => void) | null = null;
 
     const setupListeners = async () => {
       try {
@@ -627,6 +631,23 @@ function App() {
         unlistenPluelyDebug = await listen('pluely-audio-debug', (event: any) => {
           console.log('🪵 [PluelyDebug]', event.payload);
         });
+
+        // Listen for Microphone speech start
+        unlistenMicSpeechStart = await listen('mic-speech-start', () => {
+          console.log('🎤 Microphone: speech-start detected');
+          setState(prev => ({ ...prev, isTranscriptionActive: true }));
+        });
+
+        // Listen for Microphone speech-detected (WAV b64 payload)
+        unlistenMicSpeechDetected = await listen('mic-speech-detected', (event: any) => {
+          console.log('🎙️ Microphone: speech-detected event, length:', (event.payload as string)?.length);
+          // Audio is now being processed automatically
+        });
+
+        // Listen for Microphone debug events
+        unlistenMicDebug = await listen('pluely-microphone-debug', (event: any) => {
+          console.log('🪵 [MicrophoneDebug]', event.payload);
+        });
       } catch (error) {
         console.error('Failed to set up listeners:', error);
       }
@@ -641,6 +662,9 @@ function App() {
       if (unlistenPluelyDebug) unlistenPluelyDebug();
       if (unlistenPluelyStatus) unlistenPluelyStatus();
       if (unlistenTranscriptionError) unlistenTranscriptionError();
+      if (unlistenMicSpeechStart) unlistenMicSpeechStart();
+      if (unlistenMicSpeechDetected) unlistenMicSpeechDetected();
+      if (unlistenMicDebug) unlistenMicDebug();
     };
   }, []);
 
@@ -1306,48 +1330,75 @@ function App() {
     };
   }, []);
 
-  // Handle microphone toggle
+  // Handle microphone toggle (Pluely-style + Deepgram)
   const toggleMicrophone = useCallback(async () => {
     try {
       const currentState = stateRef.current;
       console.log('🎤 Microphone toggle - Current state:', currentState.isMicOn);
       
       if (currentState.isMicOn) {
-        // Stop transcription
-        console.log('🎤 Stopping microphone transcription...');
-        await invoke('stop_transcription');
+        // Stop Deepgram first
+        console.log('📡 Stopping Deepgram streaming...');
+        await invoke('stop_deepgram_streaming');
+        
+        // Stop Pluely microphone capture
+        console.log('🎤 Stopping Pluely microphone capture...');
+        await invoke('stop_pluely_microphone_capture');
         setState(prev => ({ ...prev, isMicOn: false, isTranscriptionActive: false }));
         console.log('🎤 Microphone turned OFF');
       } else {
-        // Start microphone transcription
-        console.log('🎤 Starting microphone transcription...');
-        await invoke('start_microphone_transcription');
+        // Start Pluely microphone capture
+        console.log('🎤 Starting Pluely microphone capture...');
+        await invoke('start_pluely_microphone_capture');
+        
+        // Start Deepgram streaming
+        console.log('📡 Starting Deepgram Nova-3 streaming...');
+        await invoke('start_deepgram_streaming');
+        
         setState(prev => ({ ...prev, isMicOn: true, isTranscriptionActive: true }));
-        console.log('🎤 Microphone turned ON');
+        console.log('🎤 Microphone turned ON (Pluely + Deepgram active)');
       }
     } catch (error) {
       console.error('Failed to toggle microphone:', error);
+      // Show error notification
+      setState(prev => ({
+        ...prev,
+        notification: {
+          isOpen: true,
+          title: 'Microphone Error',
+          message: (error as any)?.message || String(error),
+        }
+      }));
     }
   }, []); // No dependencies since we use stateRef
 
-// Handle system audio toggle (Unified Pluely-Deepgram integration)
+// Handle system audio toggle (Pluely-style WASAPI loopback + Deepgram)
   const toggleSystemAudio = useCallback(async () => {
     try {
       const currentState = stateRef.current;
       console.log('🔊 System audio toggle - Current state:', currentState.isSystemSoundOn);
 
       if (currentState.isSystemSoundOn) {
-        // Stop unified Pluely-Deepgram transcription
-        console.log('🔊 Stopping unified Pluely-Deepgram transcription...');
-        await invoke('stop_pluely_deepgram_transcription');
+        // Stop Deepgram first
+        console.log('📡 Stopping Deepgram streaming...');
+        await invoke('stop_deepgram_streaming');
+        
+        // Stop Pluely system audio capture
+        console.log('🔊 Stopping Pluely system audio capture...');
+        await invoke('stop_pluely_system_audio_capture');
         setState(prev => ({ ...prev, isSystemSoundOn: false, isTranscriptionActive: false }));
-        console.log('🔊 System audio turned OFF (unified pipeline stopped)');
+        console.log('🔊 System audio turned OFF (Pluely capture stopped)');
       } else {
-        // Start unified Pluely-Deepgram transcription
-        console.log('🔊 Starting unified Pluely-Deepgram transcription...');
-        await invoke('start_pluely_deepgram_transcription');
+        // Start Pluely system audio capture
+        console.log('🔊 Starting Pluely system audio capture...');
+        await invoke('start_pluely_system_audio_capture');
+        
+        // Start Deepgram streaming
+        console.log('📡 Starting Deepgram Nova-3 streaming...');
+        await invoke('start_deepgram_streaming');
+        
         setState(prev => ({ ...prev, isSystemSoundOn: true, isTranscriptionActive: true }));
-        console.log('🔊 System audio turned ON (unified pipeline active)');
+        console.log('🔊 System audio turned ON (Pluely WASAPI loopback + Deepgram active)');
       }
     } catch (error) {
       console.error('Failed to toggle system audio:', error);
@@ -2040,20 +2091,7 @@ function App() {
           </div>
         </div>
         
-        {/* Live Nova-3 Transcription Panel */}
-        <div className="mt-2">
-          <LiveTranscription
-            className="w-full"
-            onTranscriptionUpdate={(text, isFinal) => {
-              setState(prev => ({
-                ...prev,
-                fullTranscription: isFinal ? text : prev.fullTranscription,
-                interimTranscription: isFinal ? '' : text.replace(prev.fullTranscription, '').trim(),
-                transcriptionText: text || 'Ready to assist you...'
-              }));
-            }}
-          />
-        </div>
+        {/* Live Nova-3 Transcription Panel removed */}
         
       </div>
     );

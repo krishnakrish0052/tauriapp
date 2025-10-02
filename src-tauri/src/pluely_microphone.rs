@@ -1,5 +1,5 @@
-// Pluely-style system audio capture for MockMate
-// Direct WASAPI integration with Voice Activity Detection
+// Pluely-style microphone audio capture for MockMate
+// Similar to pluely_audio.rs but for microphone input
 // Based on Pluely's efficient implementation
 
 use anyhow::Result;
@@ -16,24 +16,24 @@ use hound::{WavSpec, WavWriter};
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use std::io::Cursor;
 
-// Pluely's Voice Activity Detection constants - tuned for optimal performance
+// Pluely's Voice Activity Detection constants - same as system audio
 const HOP_SIZE: usize = 1024;              // Analysis chunk size (~23ms at 44.1kHz)
-const VAD_SENSITIVITY_RMS: f32 = 0.02;     // RMS sensitivity for VAD (increased for less sensitivity)
-const SPEECH_PEAK_THRESHOLD: f32 = 0.05;   // Peak threshold for VAD (increased for less sensitivity)
-const SILENCE_CHUNKS: usize = 47;          // ~1s silence to end speech
-const MIN_SPEECH_CHUNKS: usize = 15;       // ~0.32s min speech duration
-const PRE_SPEECH_CHUNKS: usize = 15;       // ~0.32s pre-speech buffer
+const VAD_SENSITIVITY_RMS: f32 = 0.015;    // RMS sensitivity for microphone (more sensitive)
+const SPEECH_PEAK_THRESHOLD: f32 = 0.03;   // Peak threshold for microphone (more sensitive)
+const SILENCE_CHUNKS: usize = 35;          // ~0.8s silence to end speech (faster for mic)
+const MIN_SPEECH_CHUNKS: usize = 10;       // ~0.23s min speech duration
+const PRE_SPEECH_CHUNKS: usize = 10;       // ~0.23s pre-speech buffer
 
-/// Pluely-style speaker input for system audio capture
-pub struct PluelySpeakerInput {}
+/// Pluely-style microphone input
+pub struct PluelyMicrophoneInput {}
 
-impl PluelySpeakerInput {
+impl PluelyMicrophoneInput {
     pub fn new() -> Result<Self> {
         Ok(Self {})
     }
 
-    /// Start the audio stream - returns a Pluely-style speaker stream
-    pub fn stream(self) -> PluelySpeakerStream {
+    /// Start the microphone stream
+    pub fn stream(self) -> PluelyMicrophoneStream {
         let sample_queue = Arc::new(Mutex::new(VecDeque::new()));
         let waker_state = Arc::new(Mutex::new(WakerState {
             waker: None,
@@ -46,17 +46,17 @@ impl PluelySpeakerInput {
         let waker_clone = waker_state.clone();
 
         let capture_thread = thread::spawn(move || {
-            if let Err(e) = PluelySpeakerStream::capture_audio_loop(queue_clone, waker_clone, init_tx) {
-                error!("Pluely Audio capture loop failed: {}", e);
+            if let Err(e) = PluelyMicrophoneStream::capture_audio_loop(queue_clone, waker_clone, init_tx) {
+                error!("Pluely Microphone capture loop failed: {}", e);
             }
         });
 
         // Wait for initialization with timeout
         if let Ok(Err(e)) = init_rx.recv_timeout(Duration::from_secs(5)) {
-            error!("Pluely Audio initialization failed: {}", e);
+            error!("Pluely Microphone initialization failed: {}", e);
         }
 
-        PluelySpeakerStream {
+        PluelyMicrophoneStream {
             sample_queue,
             waker_state,
             capture_thread: Some(capture_thread),
@@ -71,30 +71,30 @@ struct WakerState {
     shutdown: bool,
 }
 
-/// Pluely-style speaker stream - implements Stream trait for efficient audio processing
-pub struct PluelySpeakerStream {
+/// Pluely-style microphone stream
+pub struct PluelyMicrophoneStream {
     sample_queue: Arc<Mutex<VecDeque<f32>>>,
     waker_state: Arc<Mutex<WakerState>>,
     capture_thread: Option<thread::JoinHandle<()>>,
 }
 
-impl PluelySpeakerStream {
+impl PluelyMicrophoneStream {
     /// Get sample rate (fixed at 44.1kHz like Pluely)
     pub fn sample_rate(&self) -> u32 {
         44100
     }
 
-    /// Main audio capture loop using direct WASAPI - based on Pluely's implementation
+    /// Main microphone capture loop using WASAPI - based on Pluely's implementation
     fn capture_audio_loop(
         sample_queue: Arc<Mutex<VecDeque<f32>>>,
         waker_state: Arc<Mutex<WakerState>>,
         init_tx: mpsc::Sender<Result<()>>,
     ) -> Result<()> {
-        info!("🎵 Starting Pluely-style WASAPI capture loop...");
+        info!("🎤 Starting Pluely-style WASAPI microphone capture loop...");
 
         let init_result = (|| -> Result<_> {
-            // Get default render device for loopback capture
-            let device = get_default_device(&Direction::Render)?;
+            // Get default CAPTURE device for microphone input
+            let device = get_default_device(&Direction::Capture)?;
             let mut audio_client = device.get_iaudioclient()?;
 
             // Use Pluely's exact format configuration
@@ -107,23 +107,23 @@ impl PluelySpeakerStream {
                 buffer_duration_hns: min_time,
             };
 
-            // Initialize in capture mode for loopback
+            // Initialize in capture mode for microphone
             audio_client.initialize_client(&desired_format, &Direction::Capture, &mode)?;
 
             let h_event = audio_client.set_get_eventhandle()?;
-            let render_client = audio_client.get_audiocaptureclient()?;
+            let capture_client = audio_client.get_audiocaptureclient()?;
 
             audio_client.start_stream()?;
-            info!("✅ Pluely-style WASAPI capture initialized successfully");
+            info!("✅ Pluely-style WASAPI microphone capture initialized successfully");
 
-            Ok((h_event, render_client))
+            Ok((h_event, capture_client))
         })();
 
         match init_result {
-            Ok((h_event, render_client)) => {
+            Ok((h_event, capture_client)) => {
                 let _ = init_tx.send(Ok(()));
 
-                info!("🎵 Pluely audio capture loop running...");
+                info!("🎤 Pluely microphone capture loop running...");
                 loop {
                     // Check shutdown signal
                     {
@@ -135,14 +135,14 @@ impl PluelySpeakerStream {
 
                     // Wait for audio event (3 second timeout)
                     if h_event.wait_for_event(3000).is_err() {
-                        debug!("Pluely audio event timeout, continuing...");
+                        debug!("Pluely microphone event timeout, continuing...");
                         continue;
                     }
 
-                    // Read audio data from device
+                    // Read audio data from microphone
                     let mut temp_queue = VecDeque::new();
-                    if let Err(e) = render_client.read_from_device_to_deque(&mut temp_queue) {
-                        warn!("Pluely failed to read audio data: {}", e);
+                    if let Err(e) = capture_client.read_from_device_to_deque(&mut temp_queue) {
+                        warn!("Pluely microphone failed to read audio data: {}", e);
                         continue;
                     }
 
@@ -196,13 +196,13 @@ impl PluelySpeakerStream {
             }
         }
 
-        info!("🛑 Pluely audio capture loop ended");
+        info!("🛑 Pluely microphone capture loop ended");
         Ok(())
     }
 }
 
-/// Clean shutdown for the speaker stream
-impl Drop for PluelySpeakerStream {
+/// Clean shutdown for the microphone stream
+impl Drop for PluelyMicrophoneStream {
     fn drop(&mut self) {
         {
             let mut state = self.waker_state.lock().unwrap();
@@ -211,14 +211,14 @@ impl Drop for PluelySpeakerStream {
 
         if let Some(thread) = self.capture_thread.take() {
             if let Err(e) = thread.join() {
-                error!("Failed to join Pluely capture thread: {:?}", e);
+                error!("Failed to join Pluely microphone capture thread: {:?}", e);
             }
         }
     }
 }
 
 /// Stream implementation for async compatibility
-impl Stream for PluelySpeakerStream {
+impl Stream for PluelyMicrophoneStream {
     type Item = f32;
 
     fn poll_next(
@@ -263,13 +263,12 @@ impl Stream for PluelySpeakerStream {
     }
 }
 
-/// Pluely-style Voice Activity Detection and Audio Processing
-pub struct PluelyAudioProcessor {
+/// Pluely-style Microphone Audio Processor with VAD
+pub struct PluelyMicrophoneProcessor {
     app_handle: AppHandle,
     sample_buffer: VecDeque<f32>,
     pre_speech_buffer: VecDeque<f32>,
     speech_buffer: Vec<f32>,
-    // New fields for real-time streaming
     streaming_buffer: Vec<f32>,
     streaming_enabled: bool,
     in_speech: bool,
@@ -278,16 +277,15 @@ pub struct PluelyAudioProcessor {
     sample_rate: u32,
 }
 
-impl PluelyAudioProcessor {
+impl PluelyMicrophoneProcessor {
     pub fn new(app_handle: AppHandle) -> Self {
         Self {
             app_handle,
             sample_buffer: VecDeque::new(),
             pre_speech_buffer: VecDeque::new(),
             speech_buffer: Vec::new(),
-            // Initialize new streaming fields
             streaming_buffer: Vec::new(),
-            streaming_enabled: true, // Enable by default for real-time transcription
+            streaming_enabled: true,
             in_speech: false,
             silence_chunks: 0,
             speech_chunks: 0,
@@ -295,17 +293,17 @@ impl PluelyAudioProcessor {
         }
     }
 
-    /// Start Pluely-style system audio capture with VAD and Deepgram integration
-pub async fn start_capture_with_transcription(&mut self) -> Result<()> {
-        info!("🎵 Starting Pluely-style audio capture with transcription...");
+    /// Start Pluely-style microphone audio capture with VAD
+    pub async fn start_capture_with_transcription(&mut self) -> Result<()> {
+        info!("🎤 Starting Pluely-style microphone capture with transcription...");
 
-        let input = PluelySpeakerInput::new()?;
+        let input = PluelyMicrophoneInput::new()?;
         let mut stream = input.stream();
         let sr = stream.sample_rate();
         self.sample_rate = sr;
 
         // Emit debug: capture initialized
-        let _ = self.app_handle.emit("pluely-audio-debug", serde_json::json!({
+        let _ = self.app_handle.emit("pluely-microphone-debug", serde_json::json!({
             "event": "capture-initialized",
             "sample_rate": sr,
             "hop_size": HOP_SIZE,
@@ -316,23 +314,23 @@ pub async fn start_capture_with_transcription(&mut self) -> Result<()> {
         }));
 
         let app_clone = self.app_handle.clone();
-        let stop_flag = get_stop_flag();
+        let stop_flag = get_mic_stop_flag();
         stop_flag.store(false, std::sync::atomic::Ordering::Relaxed);
         
         tokio::spawn(async move {
-            let mut processor = PluelyAudioProcessor::new(app_clone.clone());
+            let mut processor = PluelyMicrophoneProcessor::new(app_clone.clone());
             processor.sample_rate = sr;
 
             use futures_util::StreamExt;
             while let Some(sample) = stream.next().await {
                 // Check if we should stop
                 if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    info!("🛑 System audio capture task stopping due to stop flag");
+                    info!("🛑 Microphone capture task stopping due to stop flag");
                     break;
                 }
                 processor.process_sample(sample).await;
             }
-            info!("🛑 System audio capture task ended");
+            info!("🛑 Microphone capture task ended");
         });
 
         Ok(())
@@ -346,26 +344,16 @@ pub async fn start_capture_with_transcription(&mut self) -> Result<()> {
         if self.streaming_enabled {
             self.streaming_buffer.push(sample);
             
-            // Send streaming chunks every 2048 samples (~46ms at 44.1kHz for low latency)
+            // Send streaming chunks every 2048 samples (~46ms at 44.1kHz)
             const STREAMING_CHUNK_SIZE: usize = 2048;
             if self.streaming_buffer.len() >= STREAMING_CHUNK_SIZE {
                 if let Ok(b64_chunk) = self.samples_to_wav_b64(&self.streaming_buffer) {
-                    // Emit real-time audio chunk for Deepgram streaming
-                    let _ = self.app_handle.emit("audio-chunk", b64_chunk);
+                    let _ = self.app_handle.emit("mic-audio-chunk", b64_chunk);
                 }
                 self.streaming_buffer.clear();
             }
         }
         
-        // Debug logging every 100,000 samples (about every 2.3 seconds at 44.1kHz)
-        static mut SAMPLE_COUNTER: usize = 0;
-        unsafe {
-            SAMPLE_COUNTER += 1;
-            if SAMPLE_COUNTER % 100000 == 0 {
-                info!("🎵 Audio samples processed: {} (sample value: {:.6})", SAMPLE_COUNTER, sample);
-            }
-        }
-
         // Process in chunks of HOP_SIZE (Pluely's method)
         while self.sample_buffer.len() >= HOP_SIZE {
             let mut chunk = Vec::with_capacity(HOP_SIZE);
@@ -378,26 +366,6 @@ pub async fn start_capture_with_transcription(&mut self) -> Result<()> {
             let (rms, peak) = Self::process_chunk(&chunk);
             let is_speech = rms > VAD_SENSITIVITY_RMS || peak > SPEECH_PEAK_THRESHOLD;
             
-            // Debug logging every 100 chunks (about every 2.3 seconds)
-            static mut DEBUG_COUNTER: usize = 0;
-            unsafe {
-                DEBUG_COUNTER += 1;
-                if DEBUG_COUNTER % 100 == 0 {
-                info!("📊 Audio activity: RMS={:.6}, Peak={:.6}, Speech={}, Threshold RMS={:.6}, Threshold Peak={:.6}", 
-                      rms, peak, is_speech, VAD_SENSITIVITY_RMS, SPEECH_PEAK_THRESHOLD);
-                
-                // Emit audio level update for UI visualization
-                if true {
-                    let _ = self.app_handle.emit("audio-level", serde_json::json!({
-                        "rms": rms,
-                        "peak": peak,
-                        "speech": is_speech,
-                        "timestamp": chrono::Utc::now().timestamp_millis()
-                    }));
-                }
-                }
-            }
-
             if is_speech {
                 if !self.in_speech {
                     // Speech started
@@ -409,11 +377,11 @@ pub async fn start_capture_with_transcription(&mut self) -> Result<()> {
                     self.speech_buffer.extend(self.pre_speech_buffer.drain(..));
                     
                     // Emit speech start event
-                    let _ = self.app_handle.emit("speech-start", ()).map_err(|e| {
-                        error!("Failed to emit speech-start: {}", e);
+                    let _ = self.app_handle.emit("mic-speech-start", ()).map_err(|e| {
+                        error!("Failed to emit mic-speech-start: {}", e);
                     });
                     
-                    info!("🎙️ Speech detected - starting capture");
+                    info!("🎙️ Microphone speech detected - starting capture");
                 }
                 
                 self.speech_chunks += 1;
@@ -423,8 +391,8 @@ pub async fn start_capture_with_transcription(&mut self) -> Result<()> {
                 let max_samples = self.sample_rate as usize * 30;
                 if self.speech_buffer.len() > max_samples {
                     if let Ok(b64) = self.samples_to_wav_b64(&self.speech_buffer) {
-                        let _ = self.app_handle.emit("speech-detected", b64);
-                        info!("🎵 Emitted speech segment (safety cap): {} samples", self.speech_buffer.len());
+                        let _ = self.app_handle.emit("mic-speech-detected", b64);
+                        info!("🎤 Emitted microphone speech segment (safety cap): {} samples", self.speech_buffer.len());
                     }
                     self.speech_buffer.clear();
                     self.in_speech = false;
@@ -433,11 +401,6 @@ pub async fn start_capture_with_transcription(&mut self) -> Result<()> {
                 if self.in_speech {
                     self.silence_chunks += 1;
                     self.speech_buffer.extend_from_slice(&chunk);
-                    
-                    // Debug log silence accumulation
-                    if self.silence_chunks % 10 == 0 {
-                        info!("🔇 Silence detected: {} chunks (need {} to complete)", self.silence_chunks, SILENCE_CHUNKS);
-                    }
                     
                     // Check if we have enough silence to end speech
                     if self.silence_chunks >= SILENCE_CHUNKS {
@@ -450,8 +413,8 @@ pub async fn start_capture_with_transcription(&mut self) -> Result<()> {
                             
                             // Convert to WAV and emit
                             if let Ok(b64) = self.samples_to_wav_b64(&self.speech_buffer) {
-                                let _ = self.app_handle.emit("speech-detected", b64);
-                                info!("🎵 Emitted speech segment: {} samples ({:.2}s)", 
+                                let _ = self.app_handle.emit("mic-speech-detected", b64);
+                                info!("🎤 Emitted microphone speech segment: {} samples ({:.2}s)", 
                                       self.speech_buffer.len(), 
                                       self.speech_buffer.len() as f32 / self.sample_rate as f32);
                             }
@@ -474,7 +437,7 @@ pub async fn start_capture_with_transcription(&mut self) -> Result<()> {
         }
     }
 
-    /// Process audio chunk for VAD (RMS and peak calculation) - Pluely's method
+    /// Process audio chunk for VAD (RMS and peak calculation)
     fn process_chunk(chunk: &[f32]) -> (f32, f32) {
         let mut sumsq = 0.0f32;
         let mut peak = 0.0f32;
@@ -489,7 +452,7 @@ pub async fn start_capture_with_transcription(&mut self) -> Result<()> {
         (rms, peak)
     }
 
-    /// Convert samples to WAV base64 for Deepgram - Pluely's method
+    /// Convert samples to WAV base64
     fn samples_to_wav_b64(&self, samples: &[f32]) -> Result<String, String> {
         let mut cursor = Cursor::new(Vec::new());
         let spec = WavSpec {
@@ -510,30 +473,28 @@ pub async fn start_capture_with_transcription(&mut self) -> Result<()> {
         writer.finalize().map_err(|e| e.to_string())?;
         Ok(B64.encode(cursor.into_inner()))
     }
-
 }
 
-/// Global state management for audio capture
-static AUDIO_STATE: once_cell::sync::OnceCell<Arc<Mutex<Option<PluelyAudioProcessor>>>> = once_cell::sync::OnceCell::new();
+/// Global state management for microphone capture
+static MIC_AUDIO_STATE: once_cell::sync::OnceCell<Arc<Mutex<Option<PluelyMicrophoneProcessor>>>> = once_cell::sync::OnceCell::new();
 
 // Add a flag to signal the capture task to stop
-static AUDIO_STOP_FLAG: once_cell::sync::OnceCell<Arc<std::sync::atomic::AtomicBool>> = once_cell::sync::OnceCell::new();
+static MIC_STOP_FLAG: once_cell::sync::OnceCell<Arc<std::sync::atomic::AtomicBool>> = once_cell::sync::OnceCell::new();
 
-fn get_audio_processor() -> Arc<Mutex<Option<PluelyAudioProcessor>>> {
-    AUDIO_STATE.get_or_init(|| Arc::new(Mutex::new(None))).clone()
+fn get_mic_audio_processor() -> Arc<Mutex<Option<PluelyMicrophoneProcessor>>> {
+    MIC_AUDIO_STATE.get_or_init(|| Arc::new(Mutex::new(None))).clone()
 }
 
-fn get_stop_flag() -> Arc<std::sync::atomic::AtomicBool> {
-    AUDIO_STOP_FLAG.get_or_init(|| Arc::new(std::sync::atomic::AtomicBool::new(false))).clone()
+fn get_mic_stop_flag() -> Arc<std::sync::atomic::AtomicBool> {
+    MIC_STOP_FLAG.get_or_init(|| Arc::new(std::sync::atomic::AtomicBool::new(false))).clone()
 }
 
-/// Tauri command to start Pluely-style system audio capture
+/// Tauri command to start Pluely-style microphone capture
 #[tauri::command]
-pub async fn start_pluely_system_audio_capture(app: AppHandle) -> Result<(), String> {
-    info!("🚀 Starting Pluely-style system audio capture...");
+pub async fn start_pluely_microphone_capture(app: AppHandle) -> Result<(), String> {
+    info!("🚀 Starting Pluely-style microphone capture...");
 
-    // Emit debug event to UI
-    let _ = app.emit("pluely-audio-debug", serde_json::json!({
+    let _ = app.emit("pluely-microphone-debug", serde_json::json!({
         "event": "start-requested",
         "timestamp": std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -541,23 +502,23 @@ pub async fn start_pluely_system_audio_capture(app: AppHandle) -> Result<(), Str
             .unwrap_or(0)
     }));
     
-    let processor_arc = get_audio_processor();
+    let processor_arc = get_mic_audio_processor();
     
-    // Stop existing processor if running (scope the MutexGuard)
+    // Stop existing processor if running
     {
         let mut processor_guard = processor_arc.lock().unwrap();
         if processor_guard.is_some() {
-            info!("Stopping existing audio processor...");
+            info!("Stopping existing microphone processor...");
             *processor_guard = None;
         }
     }
     
     // Create new processor
-    let mut processor = PluelyAudioProcessor::new(app.clone());
+    let mut processor = PluelyMicrophoneProcessor::new(app.clone());
     
     // Start capture with transcription
     if let Err(e) = processor.start_capture_with_transcription().await.map_err(|e| e.to_string()) {
-        let _ = app.emit("pluely-audio-debug", serde_json::json!({
+        let _ = app.emit("pluely-microphone-debug", serde_json::json!({
             "event": "start-error",
             "error": e,
             "timestamp": std::time::SystemTime::now()
@@ -568,14 +529,13 @@ pub async fn start_pluely_system_audio_capture(app: AppHandle) -> Result<(), Str
         return Err(e);
     }
     
-    // Store the processor (scope the MutexGuard)
+    // Store the processor
     {
         let mut processor_guard = processor_arc.lock().unwrap();
         *processor_guard = Some(processor);
     }
 
-    // Emit started event
-    let _ = app.emit("pluely-audio-debug", serde_json::json!({
+    let _ = app.emit("pluely-microphone-debug", serde_json::json!({
         "event": "started",
         "timestamp": std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -583,17 +543,16 @@ pub async fn start_pluely_system_audio_capture(app: AppHandle) -> Result<(), Str
             .unwrap_or(0)
     }));
     
-    info!("✅ Pluely-style system audio capture started successfully");
+    info!("✅ Pluely-style microphone capture started successfully");
     Ok(())
 }
 
-/// Tauri command to stop system audio capture
+/// Tauri command to stop microphone capture
 #[tauri::command]
-pub async fn stop_pluely_system_audio_capture(app: AppHandle) -> Result<(), String> {
-    info!("🛑 Stopping Pluely-style system audio capture...");
+pub async fn stop_pluely_microphone_capture(app: AppHandle) -> Result<(), String> {
+    info!("🛑 Stopping Pluely-style microphone capture...");
 
-    // Emit debug event to UI
-    let _ = app.emit("pluely-audio-debug", serde_json::json!({
+    let _ = app.emit("pluely-microphone-debug", serde_json::json!({
         "event": "stop-requested",
         "timestamp": std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -602,20 +561,19 @@ pub async fn stop_pluely_system_audio_capture(app: AppHandle) -> Result<(), Stri
     }));
     
     // Set the stop flag to signal the capture task to stop
-    let stop_flag = get_stop_flag();
+    let stop_flag = get_mic_stop_flag();
     stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-    info!("🛑 Stop flag set to true");
+    info!("🛑 Microphone stop flag set to true");
     
     // Wait a bit for the task to stop
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
     
-    let processor_arc = get_audio_processor();
+    let processor_arc = get_mic_audio_processor();
     let mut processor_guard = processor_arc.lock().unwrap();
     
     *processor_guard = None;
 
-    // Emit stopped event
-    let _ = app.emit("pluely-audio-debug", serde_json::json!({
+    let _ = app.emit("pluely-microphone-debug", serde_json::json!({
         "event": "stopped",
         "timestamp": std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -623,35 +581,14 @@ pub async fn stop_pluely_system_audio_capture(app: AppHandle) -> Result<(), Stri
             .unwrap_or(0)
     }));
     
-    info!("✅ Pluely-style system audio capture stopped");
+    info!("✅ Pluely-style microphone capture stopped");
     Ok(())
 }
 
-/// Check if system audio capture is active
+/// Check if microphone capture is active
 #[tauri::command]
-pub async fn is_pluely_audio_active() -> Result<bool, String> {
-    let processor_arc = get_audio_processor();
+pub async fn is_pluely_microphone_active() -> Result<bool, String> {
+    let processor_arc = get_mic_audio_processor();
     let processor_guard = processor_arc.lock().unwrap();
     Ok(processor_guard.is_some())
-}
-
-/// Test command to verify Pluely system audio capture works
-#[tauri::command]
-pub async fn test_pluely_system_audio_capture(app: AppHandle, duration_seconds: u64) -> Result<String, String> {
-    info!("🧑‍🔬 Testing Pluely system audio capture for {} seconds", duration_seconds);
-    
-    // Start capture
-    if let Err(e) = start_pluely_system_audio_capture(app.clone()).await {
-        return Err(format!("Failed to start capture: {}", e));
-    }
-    
-    info!("Capture started, waiting {} seconds...", duration_seconds);
-    tokio::time::sleep(tokio::time::Duration::from_secs(duration_seconds)).await;
-    
-    // Stop capture
-    if let Err(e) = stop_pluely_system_audio_capture(app.clone()).await {
-        return Err(format!("Failed to stop capture: {}", e));
-    }
-    
-    Ok(format!("Pluely system audio capture test completed successfully for {} seconds", duration_seconds))
 }

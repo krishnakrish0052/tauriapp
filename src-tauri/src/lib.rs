@@ -20,6 +20,8 @@ pub mod windows_audio_capture; // Native Windows WASAPI loopback audio capture
 // pub mod universal_audio_capture; // Universal system audio capture that doesn't rely on Stereo Mix
 // pub mod realtime_transcription; // DISABLED - now using Deepgram JS SDK in frontend
 pub mod pluely_audio; // Pluely-style efficient audio capture
+pub mod pluely_microphone; // Pluely-style microphone audio capture
+pub mod deepgram_streaming; // Deepgram Nova-3 streaming transcription
 pub mod accessibility_reader; // Windows Accessibility API text reader
 pub mod window_manager; // DPI-aware window management
 pub mod permissions; // Permission management for audio access
@@ -96,6 +98,14 @@ pub fn run() -> Result<()> {
             pluely_audio::stop_pluely_system_audio_capture,
             pluely_audio::is_pluely_audio_active,
             pluely_audio::test_pluely_system_audio_capture,
+            // Pluely microphone capture commands
+            pluely_microphone::start_pluely_microphone_capture,
+            pluely_microphone::stop_pluely_microphone_capture,
+            pluely_microphone::is_pluely_microphone_active,
+            // Deepgram Nova-3 streaming transcription commands
+            deepgram_streaming::start_deepgram_streaming,
+            deepgram_streaming::stop_deepgram_streaming,
+            deepgram_streaming::is_deepgram_streaming_active,
             generate_ai_answer,
             analyze_screen_content,
             update_interview_context,
