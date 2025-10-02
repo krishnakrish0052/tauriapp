@@ -81,9 +81,11 @@ impl DeepgramStreamer {
         let model = get_deepgram_model();
         info!("📡 Using Deepgram model: {}", model);
 
-        // Build Deepgram WebSocket URL with Nova-3 optimized parameters
+        // Build Deepgram WebSocket URL with low-latency optimized parameters
+        // Reduced endpointing to 100ms for faster results (was 50ms)
+        // Using interim_results but with smart handling to reduce repetition
         let ws_url = format!(
-            "wss://api.deepgram.com/v1/listen?model={}&language=en-US&encoding=linear16&sample_rate=44100&channels=1&endpointing=50&interim_results=true&smart_format=true&punctuate=true&numerals=true",
+            "wss://api.deepgram.com/v1/listen?model={}&language=en-US&encoding=linear16&sample_rate=44100&channels=1&endpointing=100&interim_results=true&smart_format=true&punctuate=true&numerals=true&vad_events=true",
             model
         );
 

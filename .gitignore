@@ -75,3 +75,7 @@ src-tauri/Cargo.lock
 # Crush artifacts
 .crush/
 src-tauri/recordings
+
+# Pluely directory and WARP files
+pluely/
+WARP.md

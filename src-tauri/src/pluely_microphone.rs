@@ -16,13 +16,13 @@ use hound::{WavSpec, WavWriter};
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use std::io::Cursor;
 
-// Pluely's Voice Activity Detection constants - same as system audio
+// Pluely's Voice Activity Detection constants - optimized for low latency microphone
 const HOP_SIZE: usize = 1024;              // Analysis chunk size (~23ms at 44.1kHz)
 const VAD_SENSITIVITY_RMS: f32 = 0.015;    // RMS sensitivity for microphone (more sensitive)
 const SPEECH_PEAK_THRESHOLD: f32 = 0.03;   // Peak threshold for microphone (more sensitive)
-const SILENCE_CHUNKS: usize = 35;          // ~0.8s silence to end speech (faster for mic)
-const MIN_SPEECH_CHUNKS: usize = 10;       // ~0.23s min speech duration
-const PRE_SPEECH_CHUNKS: usize = 10;       // ~0.23s pre-speech buffer
+const SILENCE_CHUNKS: usize = 15;          // ~0.34s silence to end speech (reduced from 35 for faster response)
+const MIN_SPEECH_CHUNKS: usize = 5;        // ~0.11s min speech duration (reduced from 10)
+const PRE_SPEECH_CHUNKS: usize = 5;        // ~0.11s pre-speech buffer (reduced from 10)
 
 /// Pluely-style microphone input
 pub struct PluelyMicrophoneInput {}
