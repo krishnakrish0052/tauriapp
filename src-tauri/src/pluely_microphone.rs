@@ -16,13 +16,13 @@ use hound::{WavSpec, WavWriter};
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use std::io::Cursor;
 
-// Pluely's Voice Activity Detection constants - optimized for low latency microphone
-const HOP_SIZE: usize = 1024;              // Analysis chunk size (~23ms at 44.1kHz)
-const VAD_SENSITIVITY_RMS: f32 = 0.015;    // RMS sensitivity for microphone (more sensitive)
-const SPEECH_PEAK_THRESHOLD: f32 = 0.03;   // Peak threshold for microphone (more sensitive)
-const SILENCE_CHUNKS: usize = 15;          // ~0.34s silence to end speech (reduced from 35 for faster response)
-const MIN_SPEECH_CHUNKS: usize = 5;        // ~0.11s min speech duration (reduced from 10)
-const PRE_SPEECH_CHUNKS: usize = 5;        // ~0.11s pre-speech buffer (reduced from 10)
+// Ultra-low latency constants optimized for real-time interview AI microphone transcription
+const HOP_SIZE: usize = 512;               // Analysis chunk size (~11.6ms at 44.1kHz) - HALF for ultra-low latency
+const VAD_SENSITIVITY_RMS: f32 = 0.012;    // Higher sensitivity for microphone (more sensitive than system)
+const SPEECH_PEAK_THRESHOLD: f32 = 0.025;  // Lower threshold for faster microphone detection
+const SILENCE_CHUNKS: usize = 8;           // ~0.09s silence to end speech - ULTRA FAST for interviews
+const MIN_SPEECH_CHUNKS: usize = 3;        // ~0.035s min speech duration - ULTRA FAST
+const PRE_SPEECH_CHUNKS: usize = 3;        // ~0.035s pre-speech buffer - ULTRA FAST
 
 /// Pluely-style microphone input
 pub struct PluelyMicrophoneInput {}

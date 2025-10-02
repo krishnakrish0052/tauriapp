@@ -53,11 +53,13 @@ struct DeepgramAlternative {
     confidence: f64,
 }
 
-/// Deepgram streaming transcription manager
+/// Deepgram streaming transcription manager with deduplication
 pub struct DeepgramStreamer {
     app_handle: AppHandle,
     is_connected: Arc<std::sync::atomic::AtomicBool>,
     stop_flag: Arc<std::sync::atomic::AtomicBool>,
+    last_interim: Arc<Mutex<String>>,
+    last_final: Arc<Mutex<String>>,
 }
 
 impl DeepgramStreamer {
@@ -66,6 +68,8 @@ impl DeepgramStreamer {
             app_handle,
             is_connected: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             stop_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            last_interim: Arc::new(Mutex::new(String::new())),
+            last_final: Arc::new(Mutex::new(String::new())),
         }
     }
 
@@ -81,11 +85,10 @@ impl DeepgramStreamer {
         let model = get_deepgram_model();
         info!("📡 Using Deepgram model: {}", model);
 
-        // Build Deepgram WebSocket URL with low-latency optimized parameters
-        // Reduced endpointing to 100ms for faster results (was 50ms)
-        // Using interim_results but with smart handling to reduce repetition
+        // Build Deepgram WebSocket URL with absolute minimum parameters to avoid 400 error
+        // Start with basic working connection, then we can add optimizations later
         let ws_url = format!(
-            "wss://api.deepgram.com/v1/listen?model={}&language=en-US&encoding=linear16&sample_rate=44100&channels=1&endpointing=100&interim_results=true&smart_format=true&punctuate=true&numerals=true&vad_events=true",
+            "wss://api.deepgram.com/v1/listen?model={}&language=en-US&encoding=linear16&sample_rate=44100&channels=1&interim_results=true",
             model
         );
 
@@ -123,8 +126,10 @@ impl DeepgramStreamer {
         let app_clone = self.app_handle.clone();
         let stop_flag = self.stop_flag.clone();
         let is_connected = self.is_connected.clone();
+        let last_interim = self.last_interim.clone();
+        let last_final = self.last_final.clone();
 
-        // Spawn task to handle incoming transcription results
+        // Spawn task to handle incoming transcription results with deduplication
         tokio::spawn(async move {
             while let Some(msg) = read.next().await {
                 // Check stop flag
@@ -141,20 +146,38 @@ impl DeepgramStreamer {
                                     let transcript = alternative.transcript.trim();
                                     
                                     if !transcript.is_empty() {
-                                        let result = DeepgramTranscriptionResult {
-                                            text: transcript.to_string(),
-                                            is_final: response.is_final,
-                                            confidence: alternative.confidence as f32,
-                                            timestamp: chrono::Utc::now().to_rfc3339(),
-                                        };
-
-                                        // Emit transcription result to frontend
-                                        let _ = app_clone.emit("transcription-result", &result);
-
-                                        if response.is_final {
-                                            info!("📝 FINAL: \"{}\" ({:.1}%)", transcript, alternative.confidence * 100.0);
+                                        let should_emit = if response.is_final {
+                                            // For final results, check against last final to prevent duplicates
+                                            let mut last_final_guard = last_final.lock().await;
+                                            let should_emit = transcript != *last_final_guard;
+                                            *last_final_guard = transcript.to_string();
+                                            // Clear interim cache after final result
+                                            *last_interim.lock().await = String::new();
+                                            should_emit
                                         } else {
-                                            info!("⏳ INTERIM: \"{}\"", transcript);
+                                            // For interim results, check against last interim to prevent duplicates
+                                            let mut last_interim_guard = last_interim.lock().await;
+                                            let should_emit = transcript != *last_interim_guard;
+                                            *last_interim_guard = transcript.to_string();
+                                            should_emit
+                                        };
+                                        
+                                        if should_emit {
+                                            let result = DeepgramTranscriptionResult {
+                                                text: transcript.to_string(),
+                                                is_final: response.is_final,
+                                                confidence: alternative.confidence as f32,
+                                                timestamp: chrono::Utc::now().to_rfc3339(),
+                                            };
+
+                                            // Emit transcription result to frontend
+                                            let _ = app_clone.emit("transcription-result", &result);
+
+                                            if response.is_final {
+                                                info!("📝 FINAL: \"{}\" ({:.1}%)", transcript, alternative.confidence * 100.0);
+                                            } else {
+                                                info!("⏳ INTERIM: \"{}\"", transcript);
+                                            }
                                         }
                                     }
                                 }

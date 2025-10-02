@@ -16,13 +16,13 @@ use hound::{WavSpec, WavWriter};
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use std::io::Cursor;
 
-// Pluely's Voice Activity Detection constants - optimized for low latency
-const HOP_SIZE: usize = 1024;              // Analysis chunk size (~23ms at 44.1kHz)
-const VAD_SENSITIVITY_RMS: f32 = 0.02;     // RMS sensitivity for VAD
-const SPEECH_PEAK_THRESHOLD: f32 = 0.05;   // Peak threshold for VAD
-const SILENCE_CHUNKS: usize = 20;          // ~0.45s silence to end speech (reduced from 47 for faster response)
-const MIN_SPEECH_CHUNKS: usize = 8;        // ~0.18s min speech duration (reduced from 15)
-const PRE_SPEECH_CHUNKS: usize = 8;        // ~0.18s pre-speech buffer (reduced from 15)
+// Ultra-low latency constants optimized for real-time interview AI transcription
+const HOP_SIZE: usize = 512;               // Analysis chunk size (~11.6ms at 44.1kHz) - HALF for ultra-low latency
+const VAD_SENSITIVITY_RMS: f32 = 0.015;    // More sensitive RMS for faster speech detection
+const SPEECH_PEAK_THRESHOLD: f32 = 0.04;   // Lower threshold for faster speech detection
+const SILENCE_CHUNKS: usize = 10;          // ~0.12s silence to end speech - ULTRA FAST for interviews
+const MIN_SPEECH_CHUNKS: usize = 4;        // ~0.05s min speech duration - ULTRA FAST
+const PRE_SPEECH_CHUNKS: usize = 4;        // ~0.05s pre-speech buffer - ULTRA FAST
 
 /// Pluely-style speaker input for system audio capture
 pub struct PluelySpeakerInput {}
